@@ -1,0 +1,25 @@
+Sto sviluppando un progetto di teledermatologia con due modelli distinti sul server:
+- foto cliniche ravvicinate da smartphone, anche in modalità macro: nuovo modello da sviluppare;
+- immagini dermatoscopiche: modello già disponibile, addestrato su ISIC 2019.
+
+Su un altro computer sviluppo l’app Android e iPhone in Flutter per acquisire le foto e inviarle al server. In questa workstation concentriamoci sull’addestramento del nuovo modello per foto cliniche. Una foto macro non è un’immagine dermatoscopica: non usare il modello ISIC 2019 come sostituto per questo percorso.
+
+Dataset iniziale: PAD-UFES-20, fotografie cliniche da smartphone con metadati.
+Fonte ufficiale e download: https://data.mendeley.com/datasets/zr7vgbcyr2/1
+Articolo degli autori: https://arxiv.org/html/2007.00478
+Il dataset comprende 2.298 immagini, 1.641 lesioni e 1.373 pazienti, con sei categorie: ACK, BCC, MEL, NEV, SCC, SEK. La licenza riportata è CC BY 4.0: conserva fonte, versione e attribuzioni. Verifica i contenuti scaricati e i metadati prima di procedere.
+
+Voglio una pipeline riproducibile per una classificazione a sei classi con prestazioni competitive. “SOTA” è un obiettivo da dimostrare con confronti appropriati, non una prestazione da dare per acquisita.
+
+Procedi così:
+1. Controlla GPU, memoria e ambiente software disponibili; adatta il piano alle risorse effettive.
+2. Prepara il progetto, il download e un controllo di integrità dei dati; verifica distribuzione delle classi, identificativi dei pazienti e delle lesioni, immagini corrotte e duplicati.
+3. Separa i dati per paziente: tutte le foto e tutte le lesioni di un paziente devono rimanere nello stesso gruppo. Evita contaminazioni anche durante cross-validation, normalizzazione, calibrazione e aumento dei dati. Salva gli split, riutilizzali per confrontare i modelli e mantieni il test finale separato dalle scelte di sviluppo.
+4. Parti dal fine-tuning di reti preaddestrate e confronta una baseline solida con poche alternative recenti adatte alle risorse. Gestisci lo sbilanciamento usando soltanto i dati di training. Inizia con un modello basato sulle sole immagini: i metadati clinici non saranno obbligatori nella prima app.
+5. Valuta balanced accuracy, macro-F1, sensibilità e specificità per classe, matrice di confusione e intervalli di confidenza, con attenzione ai falsi negativi delle classi maligne. Seleziona e calibra le soglie senza usare il test finale. Non considerare sufficiente la sola accuracy complessiva.
+6. Esporta pesi, configurazione, dipendenze e un manifest con ordine esatto delle classi, dimensioni di input, gestione RGB e orientamento, ridimensionamento/ritaglio, normalizzazione, versione e calibrazione. Prepara anche uno script di inferenza su una singola foto.
+7. Documenta i limiti, soprattutto numerosità delle classi rare e generalizzazione a telefoni e pazienti diversi. Pianifica una validazione separata sulle immagini reali del progetto prima dell’uso clinico.
+
+L’inferenza avverrà sul server: non è necessario comprimere il modello per eseguirlo sul telefono. Mantieni separate le categorie di PAD-UFES-20 e quelle di ISIC 2019: in particolare, SEK non equivale all’intera categoria BKL. L’app dichiarerà la modalità di acquisizione clinical o dermoscopic; uno smartphone con adattatore dermatoscopico appartiene al secondo percorso.
+
+Prima di modificare un repository esistente, leggine le istruzioni. Procedi con il lavoro concreto, descrivi i risultati effettivamente verificati e segnala ciò che richiede ancora dati o configurazioni.
