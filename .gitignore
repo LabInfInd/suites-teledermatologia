@@ -1,6 +1,3 @@
-# Repository preesistente e indipendente: non includere nella nuova repository.
-/suites-repo/
-
 # File locali
 .DS_Store
 .env

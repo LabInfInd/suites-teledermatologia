@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Invio delle foto al server. Il permesso CAMERA non è dichiarato di
+         proposito: image_picker apre l'app fotocamera di sistema, che non
+         richiede permessi runtime alla nostra app. Dichiararlo renderebbe
+         obbligatoria la richiesta del permesso prima di ogni scatto. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="teledermatologia"
+        android:label="SUI.T.E.S."
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
