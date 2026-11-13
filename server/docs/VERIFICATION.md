@@ -22,3 +22,12 @@ Tempi osservati su una sola immagine sintetica: circa 2,3 s ConvNeXt, 2,3 s DINO
 Il backup prima dell aggiornamento e stato controllato con SHA-256 e i conteggi dei
 record preesistenti sono rimasti invariati durante il passaggio. La prova live ha
 creato un account tecnico poi sospeso e tre invii sintetici conservati per tracciabilita.
+
+## Raggiungibilita osservata dalla workstation dopo il rilascio
+
+Il controllo diretto della VM su 192.168.50.10:8000 restituisce HTTP 200 per /health
+e HTTP 401 per /v1/models senza token. Gli indirizzi inoltrati 10.50.3.17 e
+193.204.50.163 vanno invece in timeout da questa workstation. Questo non dimostra
+che siano irraggiungibili da ogni rete: l inoltro del PC 1 e il percorso di rete
+vanno verificati prima delle prove da telefoni. Non sono state modificate regole
+di rete o firewall esterne alla VM. HTTPS resta da configurare separatamente.
