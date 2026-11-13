@@ -5,6 +5,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 
 import 'api/http_submission_api.dart';
+import 'api/operator_session.dart';
+import 'ui/operator_login_page.dart';
 import 'api/simulated_server.dart';
 import 'api/submission_api.dart';
 import 'capture/image_inspector.dart';
@@ -21,15 +23,19 @@ class AppDependencies {
     required this.picker,
     required this.inspector,
     required this.api,
+    this.session,
   });
 
   factory AppDependencies.production(AppConfig config) {
-    // Autenticazione ancora da definire: quando sarà concordata, il token
-    // andrà passato con `accessToken` (vedi docs/api-contratto-proposta.md).
+    final connection = config.connection;
+    final session = connection is RemoteServer
+        ? OperatorSession(baseUrl: connection.baseUrl, client: http.Client())
+        : null;
     final api = switch (config.connection) {
       RemoteServer(:final baseUrl) => HttpSubmissionApi(
         client: http.Client(),
         baseUrl: baseUrl,
+        accessToken: () async => session?.token,
         maxAttempts: config.maxAttempts,
         inactivityTimeout: config.inactivityTimeout,
       ),
@@ -48,6 +54,7 @@ class AppDependencies {
       picker: ImagePickerPhotoPicker(),
       inspector: const EngineImageInspector(),
       api: api,
+      session: session,
     );
   }
 
@@ -55,6 +62,7 @@ class AppDependencies {
   final PhotoPicker picker;
   final ImageInspector inspector;
   final SubmissionApi? api;
+  final OperatorSession? session;
 }
 
 class SuitesApp extends StatefulWidget {
@@ -102,10 +110,22 @@ class _SuitesAppState extends State<SuitesApp> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: ThemeData(colorScheme: scheme(Brightness.light)),
       darkTheme: ThemeData(colorScheme: scheme(Brightness.dark)),
-      home: AcquisitionPage(
-        controller: _controller,
-        connection: widget.dependencies.config.connection,
-      ),
+      home: widget.dependencies.session != null
+          ? ListenableBuilder(
+              listenable: widget.dependencies.session!,
+              builder: (context, _) =>
+                  widget.dependencies.session!.authenticated
+                  ? AcquisitionPage(
+                      controller: _controller,
+                      connection: widget.dependencies.config.connection,
+                      session: widget.dependencies.session,
+                    )
+                  : OperatorLoginPage(session: widget.dependencies.session!),
+            )
+          : AcquisitionPage(
+              controller: _controller,
+              connection: widget.dependencies.config.connection,
+            ),
     );
   }
 }

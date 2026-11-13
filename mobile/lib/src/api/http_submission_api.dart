@@ -53,7 +53,11 @@ class HttpSubmissionApi implements SubmissionApi {
   final bool isSimulated;
 
   static Uri endpointFor(Uri baseUrl) => baseUrl.replace(
-    pathSegments: [...baseUrl.pathSegments.where((s) => s.isNotEmpty), 'v1', 'submissions'],
+    pathSegments: [
+      ...baseUrl.pathSegments.where((s) => s.isNotEmpty),
+      'v1',
+      'submissions',
+    ],
   );
 
   static Future<String?> _noAccessToken() async => null;
@@ -90,7 +94,9 @@ class HttpSubmissionApi implements SubmissionApi {
 
   Duration? _retryDelay(SubmissionFailure failure, int attempt) {
     final retryAfter = failure.retryAfter;
-    if (retryAfter != null) return retryAfter <= maxRetryAfter ? retryAfter : null;
+    if (retryAfter != null) {
+      return retryAfter <= maxRetryAfter ? retryAfter : null;
+    }
     return Duration(seconds: 2 << (attempt - 1)); // 2 s, 4 s, 8 s...
   }
 
@@ -153,6 +159,9 @@ class HttpSubmissionApi implements SubmissionApi {
         'case_code': request.caseCode,
         'source': request.photo.source.apiValue,
       });
+      if (request.modelId case final String modelId) {
+        upload.fields['model_id'] = modelId;
+      }
       final photo = request.photo;
       upload.files.add(
         http.MultipartFile(
@@ -169,7 +178,10 @@ class HttpSubmissionApi implements SubmissionApi {
       kick();
       final response = await _orAbort(_client.send(upload), abort.future);
       kick();
-      final body = await _orAbort(_readBody(response.stream, kick), abort.future);
+      final body = await _orAbort(
+        _readBody(response.stream, kick),
+        abort.future,
+      );
       return _interpret(response.statusCode, response.headers, body, request);
     } on SubmissionFailure {
       rethrow;
@@ -228,7 +240,11 @@ class HttpSubmissionApi implements SubmissionApi {
     );
   }
 
-  SubmissionReceipt _parseReceipt(int status, _ResponseBody body, SubmissionRequest request) {
+  SubmissionReceipt _parseReceipt(
+    int status,
+    _ResponseBody body,
+    SubmissionRequest request,
+  ) {
     final json = body.truncated ? null : _decodeObject(body.bytes);
     // La conferma vale solo se si riferisce esattamente a questo invio.
     if (json == null ||
@@ -236,7 +252,10 @@ class HttpSubmissionApi implements SubmissionApi {
         json['submission_id'] != request.submissionId ||
         json['mode'] != request.mode.apiValue ||
         json['case_code'] != request.caseCode) {
-      throw SubmissionFailure(SubmissionFailureKind.invalidResponse, statusCode: status);
+      throw SubmissionFailure(
+        SubmissionFailureKind.invalidResponse,
+        statusCode: status,
+      );
     }
     final reference = json['server_reference'];
     final receivedAt = json['received_at'];
@@ -244,7 +263,9 @@ class HttpSubmissionApi implements SubmissionApi {
       submissionId: request.submissionId,
       caseCode: request.caseCode,
       mode: request.mode,
-      serverReference: reference is String && reference.isNotEmpty ? _clip(reference, 64) : null,
+      serverReference: reference is String && reference.isNotEmpty
+          ? _clip(reference, 64)
+          : null,
       receivedAt: receivedAt is String ? DateTime.tryParse(receivedAt) : null,
       simulated: isSimulated || json['simulated'] == true,
     );
@@ -269,11 +290,18 @@ class HttpSubmissionApi implements SubmissionApi {
 
   static Stream<List<int>> _chunked(Uint8List bytes) async* {
     for (var start = 0; start < bytes.length; start += chunkSize) {
-      yield Uint8List.sublistView(bytes, start, min(start + chunkSize, bytes.length));
+      yield Uint8List.sublistView(
+        bytes,
+        start,
+        min(start + chunkSize, bytes.length),
+      );
     }
   }
 
-  static Future<_ResponseBody> _readBody(Stream<List<int>> stream, void Function() onData) async {
+  static Future<_ResponseBody> _readBody(
+    Stream<List<int>> stream,
+    void Function() onData,
+  ) async {
     final builder = BytesBuilder(copy: false);
     await for (final chunk in stream) {
       onData();
@@ -295,8 +323,11 @@ class _ResponseBody {
 
 /// Richiesta multipart che segnala i byte consegnati alla connessione.
 class _UploadRequest extends http.MultipartRequest with http.Abortable {
-  _UploadRequest(Uri url, {required this.abortTrigger, required this.onBytesSent})
-    : super('POST', url);
+  _UploadRequest(
+    Uri url, {
+    required this.abortTrigger,
+    required this.onBytesSent,
+  }) : super('POST', url);
 
   @override
   final Future<void> abortTrigger;

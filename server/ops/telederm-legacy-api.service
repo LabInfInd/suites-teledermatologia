@@ -1,0 +1,21 @@
+[Unit]
+Description=Teledermatologia API di prova esistente
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=suites
+Group=suites
+WorkingDirectory=/home/suites/telederm-api
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/suites/telederm-api/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

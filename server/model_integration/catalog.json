@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "clinical-convnextv2-tiny",
+      "name": "ConvNeXt V2 Tiny — foto cliniche",
+      "mode": "clinical",
+      "backend": "timm",
+      "bundle": "clinical-pad-v1",
+      "default": true,
+      "segmentation": false,
+      "enabled": true
+    },
+    {
+      "id": "clinical-dinov2-base",
+      "name": "DINOv2 Base — foto cliniche",
+      "mode": "clinical",
+      "backend": "timm",
+      "bundle": "clinical-dinov2-base-224-refit-20261113",
+      "default": false,
+      "segmentation": false,
+      "enabled": true
+    },
+    {
+      "id": "dermoscopic-ftn",
+      "name": "FTN — dermatoscopia e segmentazione",
+      "mode": "dermoscopic",
+      "backend": "ftn",
+      "bundle": ".",
+      "default": true,
+      "segmentation": true,
+      "enabled": true
+    }
+  ]
+}
