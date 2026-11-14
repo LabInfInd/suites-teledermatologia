@@ -340,6 +340,7 @@ function renderCase(data) {
     };
   }
   if ($('#submit-case')) $('#submit-case').onclick = async event => {
+    if ($('#case-mode') && $('#case-mode').value !== data.mode) {toast('Conferma la modalità selezionata prima di inviare il caso.',true); return;}
     event.currentTarget.disabled = true;
     try {state.currentCase = await api(`/api/cases/${data.id}/submit`,{method:'POST',body:{expected_version:data.version}}); renderCase(state.currentCase); schedulePoll(state.currentCase); toast('Caso inviato.');}
     catch(error) {toast(error.message,true); await route();}
