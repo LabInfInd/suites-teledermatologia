@@ -10,7 +10,9 @@ import 'package:teledermatologia/src/domain/submission.dart';
 
 import '../support/fakes.dart';
 
-typedef Handler = FutureOr<http.StreamedResponse> Function(RecordedRequest request);
+typedef Handler = FutureOr<http.StreamedResponse> Function(
+  RecordedRequest request,
+);
 
 class RecordedRequest {
   RecordedRequest(this.original, this.body);
@@ -46,14 +48,20 @@ class RecordingClient extends http.BaseClient {
   }
 }
 
-http.StreamedResponse jsonResponse(int status, Object body, {Map<String, String> headers = const {}}) =>
-    http.StreamedResponse(
-      Stream.value(utf8.encode(jsonEncode(body))),
-      status,
-      headers: {'content-type': 'application/json', ...headers},
-    );
+http.StreamedResponse jsonResponse(
+  int status,
+  Object body, {
+  Map<String, String> headers = const {},
+}) => http.StreamedResponse(
+  Stream.value(utf8.encode(jsonEncode(body))),
+  status,
+  headers: {'content-type': 'application/json', ...headers},
+);
 
-Map<String, Object?> receiptJson(SubmissionRequest request, {Map<String, Object?> overrides = const {}}) => {
+Map<String, Object?> receiptJson(
+  SubmissionRequest request, {
+  Map<String, Object?> overrides = const {},
+}) => {
   'submission_id': request.submissionId,
   'status': 'received',
   'mode': request.mode.apiValue,
@@ -96,40 +104,68 @@ void main() {
     client = RecordingClient((r) => jsonResponse(201, receiptJson(request)));
   });
 
+  test('invia il modello scelto nel multipart', () async {
+    final selected = SubmissionRequest(
+      submissionId: request.submissionId,
+      caseCode: request.caseCode,
+      mode: request.mode,
+      photo: request.photo,
+      modelId: 'dermoscopic-ftn',
+    );
+    await api().submit(selected);
+    expect(client.requests.single.fields['model_id'], 'dermoscopic-ftn');
+  });
+
   test('l’endpoint conserva il prefisso dell’indirizzo base', () {
     expect(
-      HttpSubmissionApi.endpointFor(Uri.parse('https://suites.example.org/api/')).toString(),
+      HttpSubmissionApi.endpointFor(
+        Uri.parse('https://suites.example.org/api/'),
+      ).toString(),
       'https://suites.example.org/api/v1/submissions',
     );
     expect(
-      HttpSubmissionApi.endpointFor(Uri.parse('https://suites.example.org')).toString(),
+      HttpSubmissionApi.endpointFor(Uri.parse('https://suites.example.org'))
+          .toString(),
       'https://suites.example.org/v1/submissions',
     );
   });
 
-  test('invia foto, modalità e codice caso in multipart, senza alterare la foto', () async {
-    await api().submit(request);
+  test(
+    'invia foto, modalità e codice caso in multipart, senza alterare la foto',
+    () async {
+      await api().submit(request);
 
-    final sent = client.requests.single;
-    expect(sent.original.method, 'POST');
-    expect(sent.original.url.toString(), 'https://suites.example.org/api/v1/submissions');
-    expect(sent.headers['accept'], 'application/json');
-    expect(sent.headers.containsKey('authorization'), isFalse);
-    expect(sent.fields, {
-      'submission_id': request.submissionId,
-      'mode': 'dermoscopic',
-      'case_code': 'CASO-001',
-      'source': 'camera',
-    });
-    expect(sent.text, contains('content-type: image/jpeg'));
-    expect(sent.text, contains('name="image"; filename="image.jpg"'));
-    final photo = latin1.decode(request.photo.bytes);
-    expect(sent.text.contains(photo), isTrue, reason: 'la foto deve arrivare byte per byte');
-  });
+      final sent = client.requests.single;
+      expect(sent.original.method, 'POST');
+      expect(
+        sent.original.url.toString(),
+        'https://suites.example.org/api/v1/submissions',
+      );
+      expect(sent.headers['accept'], 'application/json');
+      expect(sent.headers.containsKey('authorization'), isFalse);
+      expect(sent.fields, {
+        'submission_id': request.submissionId,
+        'mode': 'dermoscopic',
+        'case_code': 'CASO-001',
+        'source': 'camera',
+      });
+      expect(sent.text, contains('content-type: image/jpeg'));
+      expect(sent.text, contains('name="image"; filename="image.jpg"'));
+      final photo = latin1.decode(request.photo.bytes);
+      expect(
+        sent.text.contains(photo),
+        isTrue,
+        reason: 'la foto deve arrivare byte per byte',
+      );
+    },
+  );
 
   test('aggiunge il token di accesso se disponibile', () async {
     await api(token: 'token-di-prova').submit(request);
-    expect(client.requests.single.headers['authorization'], 'Bearer token-di-prova');
+    expect(
+      client.requests.single.headers['authorization'],
+      'Bearer token-di-prova',
+    );
   });
 
   test('restituisce la conferma di ricezione', () async {
@@ -149,34 +185,62 @@ void main() {
       {'case_code': 'CASO-999'},
       {'status': 'queued'},
     ]) {
-      client.handler = (r) => jsonResponse(201, receiptJson(request, overrides: overrides));
+      client.handler = (r) =>
+          jsonResponse(201, receiptJson(request, overrides: overrides));
       final failure = await failureOf(api().submit(request));
-      expect(failure.kind, SubmissionFailureKind.invalidResponse, reason: '$overrides');
+      expect(
+        failure.kind,
+        SubmissionFailureKind.invalidResponse,
+        reason: '$overrides',
+      );
       expect(failure.canRetry, isTrue);
     }
-    expect(client.requests, hasLength(4), reason: 'nessun ritentativo automatico');
+    expect(
+      client.requests,
+      hasLength(4),
+      reason: 'nessun ritentativo automatico',
+    );
   });
 
-  test('una risposta 200 non JSON o troppo grande non conferma la ricezione', () async {
-    client.handler = (r) => http.StreamedResponse(Stream.value(utf8.encode('<html>ok</html>')), 200);
-    expect((await failureOf(api().submit(request))).kind, SubmissionFailureKind.invalidResponse);
+  test(
+    'una risposta 200 non JSON o troppo grande non conferma la ricezione',
+    () async {
+      client.handler = (r) => http.StreamedResponse(
+        Stream.value(utf8.encode('<html>ok</html>')),
+        200,
+      );
+      expect(
+        (await failureOf(api().submit(request))).kind,
+        SubmissionFailureKind.invalidResponse,
+      );
 
-    client.handler = (r) => http.StreamedResponse(Stream.value(List.filled(70 * 1024, 32)), 200);
-    expect((await failureOf(api().submit(request))).kind, SubmissionFailureKind.invalidResponse);
-  });
+      client.handler = (r) =>
+          http.StreamedResponse(Stream.value(List.filled(70 * 1024, 32)), 200);
+      expect(
+        (await failureOf(api().submit(request))).kind,
+        SubmissionFailureKind.invalidResponse,
+      );
+    },
+  );
 
-  test('riporta codice e messaggio degli errori di validazione, senza ritentare', () async {
-    client.handler = (r) => jsonResponse(422, {
-      'error': {'code': 'invalid_case_code', 'message': 'Codice caso sconosciuto.'},
-    });
-    final failure = await failureOf(api().submit(request));
-    expect(failure.kind, SubmissionFailureKind.rejected);
-    expect(failure.statusCode, 422);
-    expect(failure.serverCode, 'invalid_case_code');
-    expect(failure.serverMessage, 'Codice caso sconosciuto.');
-    expect(failure.canRetry, isFalse);
-    expect(client.requests, hasLength(1));
-  });
+  test(
+    'riporta codice e messaggio degli errori di validazione, senza ritentare',
+    () async {
+      client.handler = (r) => jsonResponse(422, {
+        'error': {
+          'code': 'invalid_case_code',
+          'message': 'Codice caso sconosciuto.',
+        },
+      });
+      final failure = await failureOf(api().submit(request));
+      expect(failure.kind, SubmissionFailureKind.rejected);
+      expect(failure.statusCode, 422);
+      expect(failure.serverCode, 'invalid_case_code');
+      expect(failure.serverMessage, 'Codice caso sconosciuto.');
+      expect(failure.canRetry, isFalse);
+      expect(client.requests, hasLength(1));
+    },
+  );
 
   test('associa gli stati HTTP ai tipi di errore', () async {
     const expected = {
@@ -192,26 +256,37 @@ void main() {
       302: SubmissionFailureKind.unexpectedStatus,
     };
     for (final MapEntry(key: status, value: kind) in expected.entries) {
-      client.handler = (r) => http.StreamedResponse(const Stream.empty(), status);
+      client.handler = (r) =>
+          http.StreamedResponse(const Stream.empty(), status);
       final failure = await failureOf(api().submit(request));
       expect(failure.kind, kind, reason: 'HTTP $status');
     }
-    expect(client.requests, hasLength(expected.length), reason: 'nessun ritentativo automatico');
+    expect(
+      client.requests,
+      hasLength(expected.length),
+      reason: 'nessun ritentativo automatico',
+    );
   });
 
   test('ritenta da solo un 503 con lo stesso identificativo', () async {
     var calls = 0;
     client.handler = (r) => ++calls == 1
-        ? jsonResponse(503, {'error': {'code': 'server_unavailable', 'message': ''}})
+        ? jsonResponse(503, {
+            'error': {'code': 'server_unavailable', 'message': ''},
+          })
         : jsonResponse(201, receiptJson(request));
     final progress = <SubmissionProgress>[];
 
     final receipt = await api().submit(request, onProgress: progress.add);
 
     expect(receipt.submissionId, request.submissionId);
-    expect(client.requests.map((r) => r.fields['submission_id']).toSet(), {request.submissionId});
+    expect(client.requests.map((r) => r.fields['submission_id']).toSet(), {
+      request.submissionId,
+    });
     expect(waits, [const Duration(seconds: 2)]);
-    final retry = progress.singleWhere((p) => p.phase == SubmissionPhase.waitingToRetry);
+    final retry = progress.singleWhere(
+      (p) => p.phase == SubmissionPhase.waitingToRetry,
+    );
     expect(retry.attempt, 2);
     expect(retry.retryIn, const Duration(seconds: 2));
   });
@@ -219,14 +294,22 @@ void main() {
   test('rispetta Retry-After entro il limite', () async {
     var calls = 0;
     client.handler = (r) => ++calls == 1
-        ? http.StreamedResponse(const Stream.empty(), 429, headers: {'retry-after': '7'})
+        ? http.StreamedResponse(
+            const Stream.empty(),
+            429,
+            headers: {'retry-after': '7'},
+          )
         : jsonResponse(201, receiptJson(request));
     await api().submit(request);
     expect(waits, [const Duration(seconds: 7)]);
   });
 
   test('non attende da solo un Retry-After troppo lungo', () async {
-    client.handler = (r) => http.StreamedResponse(const Stream.empty(), 503, headers: {'retry-after': '600'});
+    client.handler = (r) => http.StreamedResponse(
+      const Stream.empty(),
+      503,
+      headers: {'retry-after': '600'},
+    );
     final failure = await failureOf(api().submit(request));
     expect(failure.kind, SubmissionFailureKind.serverUnavailable);
     expect(failure.retryAfter, const Duration(minutes: 10));
@@ -235,7 +318,8 @@ void main() {
   });
 
   test('dopo i tentativi previsti segnala l’errore di rete', () async {
-    client.handler = (r) => throw http.ClientException('Connection refused', r.original.url);
+    client.handler = (r) =>
+        throw http.ClientException('Connection refused', r.original.url);
     final failure = await failureOf(api().submit(request));
     expect(failure.kind, SubmissionFailureKind.network);
     expect(failure.canRetry, isTrue);
@@ -244,7 +328,8 @@ void main() {
   });
 
   test('segnala i problemi di certificato', () async {
-    client.handler = (r) => throw const TlsException('CERTIFICATE_VERIFY_FAILED');
+    client.handler = (r) =>
+        throw const TlsException('CERTIFICATE_VERIFY_FAILED');
     final failure = await failureOf(api().submit(request));
     expect(failure.kind, SubmissionFailureKind.insecureConnection);
     expect(client.requests, hasLength(1));
@@ -254,7 +339,9 @@ void main() {
     final progress = <SubmissionProgress>[];
     await api().submit(request, onProgress: progress.add);
 
-    final uploading = progress.where((p) => p.phase == SubmissionPhase.uploading).toList();
+    final uploading = progress
+        .where((p) => p.phase == SubmissionPhase.uploading)
+        .toList();
     expect(uploading.length, greaterThan(2));
     expect(uploading.first.bytesSent, 0);
     for (var i = 1; i < uploading.length; i++) {
@@ -271,30 +358,39 @@ void main() {
     client.handler = (r) => never.future;
     final cancel = Completer<void>();
 
-    final result = failureOf(api().submit(request, cancelSignal: cancel.future));
-    await Future<void>.delayed(Duration.zero);
-    cancel.complete();
-
-    expect((await result).kind, SubmissionFailureKind.cancelled);
-    expect(client.requests, hasLength(1));
-  });
-
-  test('l’annullamento interrompe anche l’attesa prima di un nuovo tentativo', () async {
-    client.handler = (r) => http.StreamedResponse(const Stream.empty(), 503);
-    final cancel = Completer<void>();
     final result = failureOf(
-      api(wait: (_) => Completer<void>().future).submit(request, cancelSignal: cancel.future),
+      api().submit(request, cancelSignal: cancel.future),
     );
     await Future<void>.delayed(Duration.zero);
     cancel.complete();
+
     expect((await result).kind, SubmissionFailureKind.cancelled);
     expect(client.requests, hasLength(1));
   });
+
+  test(
+    'l’annullamento interrompe anche l’attesa prima di un nuovo tentativo',
+    () async {
+      client.handler = (r) => http.StreamedResponse(const Stream.empty(), 503);
+      final cancel = Completer<void>();
+      final result = failureOf(
+        api(wait: (_) => Completer<void>().future)
+            .submit(request, cancelSignal: cancel.future),
+      );
+      await Future<void>.delayed(Duration.zero);
+      cancel.complete();
+      expect((await result).kind, SubmissionFailureKind.cancelled);
+      expect(client.requests, hasLength(1));
+    },
+  );
 
   test('interrompe l’invio dopo un periodo di inattività', () async {
     client.handler = (r) => Completer<http.StreamedResponse>().future;
     final failure = await failureOf(
-      api(maxAttempts: 1, inactivityTimeout: const Duration(milliseconds: 50)).submit(request),
+      api(
+        maxAttempts: 1,
+        inactivityTimeout: const Duration(milliseconds: 50),
+      ).submit(request),
     );
     expect(failure.kind, SubmissionFailureKind.timeout);
     expect(failure.canRetry, isTrue);

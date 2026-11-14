@@ -2,6 +2,12 @@
 
 **SUI.T.E.S.** (SUstaInable and smarT mEdical Shelter) è la piattaforma del progetto e la teledermatologia è uno dei suoi casi studio. Questa app Flutter per Android e iPhone è dedicata al caso studio di teledermatologia: acquisisce immagini dermatologiche e le invia a un server di classificazione.
 
+Il backend e ora incluso in **[server/](server/README.md)**: installazione Docker,
+configurazione, scelta dei modelli e mappe sono documentati nel README del server.
+Le modifiche del 13/11/2026 aggiungono accesso medico a runtime, scelta del modello
+dal catalogo disponibile e consultazione delle analisi sperimentali con Grad-CAM.
+Le maschere di segmentazione sono separate e disponibili soltanto per FTN.
+
 ## Struttura
 
 - `mobile/`: applicazione Flutter, con i progetti nativi Android e iOS.
@@ -28,9 +34,9 @@ Il primo flusso dell’app è implementato, con interfaccia in italiano:
 4. codice caso pseudonimo e invio di foto e modalità al server;
 5. avanzamento, conferma di ricezione, errori e ritentativi.
 
-Endpoint, autenticazione e formato della risposta non sono ancora concordati: l’app implementa la [proposta di contratto API](docs/api-contratto-proposta.md), con un collegamento configurabile e separato dall’interfaccia. Senza server reale si può usare un server simulato interno all’app, sempre segnalato.
+Il server implementa ricevute persistenti e un estensione per accesso, catalogo e risultati: l’app implementa la [proposta di contratto API](docs/api-contratto-proposta.md), con un collegamento configurabile e separato dall’interfaccia. Senza server reale si può usare un server simulato interno all’app, sempre segnalato; non richiede accesso e non simula le nuove analisi cliniche.
 
-L’app non include modelli di classificazione e non produce risultati diagnostici: la conferma mostrata dopo l’invio attesta solo la ricezione della foto.
+L’app non esegue modelli sul telefono. La conferma di invio attesta soltanto la ricezione; il medico puo poi aprire l analisi sperimentale separata, che non costituisce una diagnosi clinica validata.
 
 ## Avvio
 
@@ -65,7 +71,7 @@ La configurazione si passa in fase di build con `--dart-define` o `--dart-define
 
 Il server simulato sostituisce la rete all’interno dell’app: le foto non lasciano il telefono. È riconoscibile da un banner giallo “SERVER SIMULATO” sempre visibile, da conferme intitolate “Ricezione confermata (SIMULATA)” e da riferimenti che iniziano con `SIMULATO-`.
 
-Credenziali e token non vanno mai inseriti nel codice né passati con `--dart-define`, che finisce nel binario dell’app. L’autenticazione è ancora da definire: il client supporta già un token `Bearer` fornito a runtime (vedi la proposta di contratto).
+Credenziali e token non vanno mai inseriti nel codice né passati con `--dart-define`, che finisce nel binario dell’app. Il server richiede un account medico: la schermata di accesso ottiene un Bearer temporaneo tramite `/v1/session`. Il token resta solo in memoria; Esci lo revoca. Il catalogo `/v1/models` abilita la scelta per modalita; cambiare modello genera un nuovo invio. Per il contratto completo consultare [API mobile](server/docs/API_MOBILE.md).
 
 ## Fotocamera e qualità delle immagini
 

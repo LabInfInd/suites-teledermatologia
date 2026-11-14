@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "model_name": "FTN 7 classi e segmentazione FTN - prototipo",
+  "intended_use": "synthetic_prototype",
+  "architecture_sha256": "b9e1ec6f67e3d37fba6ba9d9a6846fe5e191b61202bf240c5acbbdd95e1c9641",
+  "adapter_sha256": "ed36c3115f738e32a8dbd960543ecc4c67e4ea9bd400675d510bbc4144d7c33a",
+  "architecture": "frozen-20261110-no-PSP",
+  "recipe_status": "provisional prototype; segmentation normalization and historical PSP behavior remain to be compared with training reference",
+  "classification": {
+    "filename": "CLASSIFICATION_5_auc.pth",
+    "sha256": "35099fd9eb638cc885f60bc9b4fddc9361b453e27ffc094f8693fb122c363e33",
+    "labels": [
+      "AK",
+      "BCC",
+      "BKL",
+      "DF",
+      "MEL",
+      "NV",
+      "VASC"
+    ],
+    "normalization": {
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ]
+    },
+    "size": [
+      224,
+      224
+    ],
+    "tta_views": 5
+  },
+  "segmentation": {
+    "filename": "Segm_model_Finale_ImageNet.pth",
+    "sha256": "576e70f6edb01ec9c24e3ada76662bbba93ce0e210ed29f275a9e2402b2d4edc",
+    "normalization": {
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ]
+    },
+    "size": [
+      512,
+      512
+    ],
+    "clahe_clip_limit": 4.0
+  },
+  "source_sha256": {
+    "CLASSIFICATION.py": "22bc13272abb7c2da55bec551d01a73a8943587c1154f67e042abfdc750ff244",
+    "classification_dataset.py": "885ae6dc29fe001c1ea6459029e35b854d4a0494c6ce980b835781ae132510f6",
+    "layers_lrp.py": "f59e0bcfb78d520df7dd01d9bd53d905ef558e6069cc58e50550d1e6e81e931b",
+    "segmentation.py": "2a3cf6c5a504a869b2656b1a897d05d737e71f5d1d9654820552b7b3995ae788",
+    "segmentation_dataset.py": "eb6bbe5d69d170536d18b8c3217e83af6a32ad24d357e01fd5bdb4861430df9c",
+    "SpatialTransformer.py": "8b24c2ea7288f395f49f3f7b7afa4670e9e6a797c16a397e61ab1d9f362f95e5",
+    "transformer_block.py": "5895d5155c1234ab8c84333c83ca38b61bac6a97645bd29df269ae9ff75fbc81",
+    "try_all.py": "2c7fc46808ca74d74c00b43c43bbdad64790694929fe9a3d539c127dfa834865",
+    "try_classification_model.py": "aa09db7658bcd2ddd2e83658533e0a0660e456da09d82291e2aa23361438fe1f"
+  },
+  "bundle_version": "prototype-20261110-ac89031fb5b4"
+}

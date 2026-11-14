@@ -1,0 +1,11 @@
+# PyTorch CPU e installato separatamente dal suo indice ufficiale nel Dockerfile.
+numpy==2.1.2
+opencv-python-headless==4.11.0.86
+albumentations==2.0.5
+albucore==0.0.23
+stringzilla==3.12.3
+simsimd==6.2.1
+scipy==1.15.2
+
+timm==1.0.15
+pillow-heif==1.8.1

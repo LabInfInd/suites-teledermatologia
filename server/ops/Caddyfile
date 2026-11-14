@@ -1,0 +1,11 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$TELEDERM_DOMAIN} {
+    request_body {
+        max_size 43MB
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy api:8000
+}

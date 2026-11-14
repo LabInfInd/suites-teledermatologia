@@ -1,6 +1,6 @@
-# Contratto API minimo per l’invio delle foto — PROPOSTA
+# Contratto di ricezione foto — compatibilita e estensione server
 
-> **Stato: proposta da concordare** con chi sviluppa il server. Endpoint, autenticazione e formato della risposta non sono ancora stati definiti; questo documento descrive ciò che l’app implementa oggi (`mobile/lib/src/api/http_submission_api.dart`) e ciò che il server simulato di sviluppo riproduce (`mobile/lib/src/api/simulated_server.dart`). Ogni modifica concordata va riportata in entrambi i file e nei test.
+> **Implementato nel server del repository.** Il contratto di ricevuta descritto sotto resta retrocompatibile; la specifica corrente aggiunge autenticazione medico, `model_id`, catalogo, stato, risultati e mappe: [server/docs/API_MOBILE.md](../server/docs/API_MOBILE.md). Le sezioni storiche sulla autenticazione da definire sono superate da `/v1/session`. La conferma di ricezione resta distinta dall analisi.
 
 ## Principi
 

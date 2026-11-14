@@ -1,0 +1,46 @@
+# HTTPS pubblico 11112; certificati Let s Encrypt tramite HTTP-01 sulla porta 80.
+# Usare con compose.yaml. Vedi docs/HTTPS_11112_HTTP01.md.
+services:
+  api:
+    ports: !override
+      - '127.0.0.1:8001:8000'
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  worker:
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  migrate:
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  gateway:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      TELEDERM_DOMAIN: ${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}
+      TELEDERM_PUBLIC_HTTPS_PORT: ${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      ACME_EMAIL: ${ACME_EMAIL:?Configurare il contatto per il certificato}
+      ACME_DIRECTORY: ${ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
+    ports:
+      - '${HTTPS_BIND_IP:-192.168.50.10}:${HTTP_VM_PORT:-8000}:80'
+      - '${HTTPS_BIND_IP:-192.168.50.10}:${HTTPS_VM_PORT:-8443}:443'
+    volumes:
+      - ./ops/Caddyfile.http01:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - gateway_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  certificates:
+  gateway_config:

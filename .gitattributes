@@ -1,0 +1,2 @@
+# Preserve exact bytes of SHA-verified server code and deployment assets.
+server/** -text
