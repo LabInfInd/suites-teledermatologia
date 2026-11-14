@@ -1,0 +1,2 @@
+/* Le immagini restano il contenuto principale anche sul tablet in verticale. */
+@media(max-width:850px){.detail-layout{grid-template-columns:1fr}}

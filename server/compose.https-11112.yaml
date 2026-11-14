@@ -1,0 +1,43 @@
+# Profilo alternativo: TLS su porta pubblica 11112 con certificato fornito.
+# Usare con compose.yaml, senza compose.https.yaml. Vedi docs/HTTPS_11112.md.
+services:
+  api:
+    ports: !override
+      - '127.0.0.1:8001:8000'
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  worker:
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  migrate:
+    environment:
+      APP_ORIGINS: https://${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}:${TELEDERM_PUBLIC_HTTPS_PORT:-11112}
+      COOKIE_SECURE: 'true'
+      HTTP_DEMO_ORIGINS: ''
+  gateway:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      TELEDERM_DOMAIN: ${TELEDERM_DOMAIN:?Configurare TELEDERM_DOMAIN}
+    ports:
+      - '${HTTPS_BIND_IP:-192.168.50.10}:${HTTPS_VM_PORT:-8443}:443'
+    volumes:
+      - ./ops/Caddyfile.external-cert:/etc/caddy/Caddyfile:ro
+      - ${TELEDERM_TLS_DIR:-./.local/tls}:/etc/telederm/tls:ro
+      - certificates:/data
+      - gateway_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  certificates:
+  gateway_config:

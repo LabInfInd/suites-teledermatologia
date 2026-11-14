@@ -1,0 +1,16 @@
+.git
+.venv
+.env
+.env.*
+.local
+.pytest_cache
+__pycache__
+tests
+docs
+backups
+data
+*.sqlite3
+*.zip
+model_integration/weights
+reports
+training
