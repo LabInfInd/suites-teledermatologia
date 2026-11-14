@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:teledermatologia/src/api/operator_session.dart';
+import 'package:teledermatologia/src/api/user_session.dart';
 import 'package:teledermatologia/src/ui/submission_result_page.dart';
 
 import '../support/fakes.dart';
@@ -14,7 +14,7 @@ void main() {
     'mostra la classificazione e la spiegazione senza inventare segmentazione',
     (tester) async {
       const id = '0b6f4a2e-3c1d-4e5f-9a7b-1c2d3e4f5a6b';
-      final session = OperatorSession(
+      final session = UserSession(
         baseUrl: Uri.parse('https://example.org'),
         client: MockClient((r) async {
           if (r.url.path.contains('/artifacts/')) {

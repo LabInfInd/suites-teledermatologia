@@ -52,3 +52,38 @@ void showBrandAboutDialog(BuildContext context) {
     ],
   );
 }
+
+/// Titolo della barra superiore: simbolo, nome della piattaforma e
+/// sottotitolo, di norma il caso studio.
+class BrandAppBarTitle extends StatelessWidget {
+  const BrandAppBarTitle({super.key, this.subtitle = Brand.caseStudy});
+
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        const BrandSymbol(size: 36),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(Brand.name, overflow: TextOverflow.ellipsis),
+              Text(
+                subtitle,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

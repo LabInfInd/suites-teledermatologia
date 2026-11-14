@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../api/submission_api.dart';
 import '../capture/image_inspector.dart';
-import '../capture/location_metadata.dart';
 import '../capture/photo_picker.dart';
+import '../capture/photo_preparation.dart';
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
 import '../domain/captured_photo.dart';
@@ -52,6 +52,23 @@ enum PhotoNotice {
   tooLarge,
   failed,
 }
+
+PhotoNotice photoNoticeForPickFailure(PhotoPickFailureKind kind) =>
+    switch (kind) {
+      PhotoPickFailureKind.cameraPermissionDenied =>
+        PhotoNotice.cameraPermissionDenied,
+      PhotoPickFailureKind.photoPermissionDenied =>
+        PhotoNotice.photoPermissionDenied,
+      PhotoPickFailureKind.cameraUnavailable => PhotoNotice.cameraUnavailable,
+      PhotoPickFailureKind.alreadyActive => PhotoNotice.alreadyActive,
+      PhotoPickFailureKind.unreadable => PhotoNotice.unreadable,
+      PhotoPickFailureKind.unknown => PhotoNotice.failed,
+    };
+
+PhotoNotice photoNoticeForRejection(PhotoRejection reason) => switch (reason) {
+  PhotoRejection.unsupportedFormat => PhotoNotice.unsupportedFormat,
+  PhotoRejection.tooLarge => PhotoNotice.tooLarge,
+};
 
 /// Stato del flusso: tipo di acquisizione, foto, codice caso e invio.
 class AcquisitionController extends ChangeNotifier {
@@ -150,16 +167,7 @@ class AcquisitionController extends ChangeNotifier {
         await _accept(picked);
       }
     } on PhotoPickException catch (e) {
-      _photoNotice = switch (e.kind) {
-        PhotoPickFailureKind.cameraPermissionDenied =>
-          PhotoNotice.cameraPermissionDenied,
-        PhotoPickFailureKind.photoPermissionDenied =>
-          PhotoNotice.photoPermissionDenied,
-        PhotoPickFailureKind.cameraUnavailable => PhotoNotice.cameraUnavailable,
-        PhotoPickFailureKind.alreadyActive => PhotoNotice.alreadyActive,
-        PhotoPickFailureKind.unreadable => PhotoNotice.unreadable,
-        PhotoPickFailureKind.unknown => PhotoNotice.failed,
-      };
+      _photoNotice = photoNoticeForPickFailure(e.kind);
     } finally {
       _isPicking = false;
       _notify();
@@ -183,24 +191,12 @@ class AcquisitionController extends ChangeNotifier {
   }
 
   Future<void> _accept(PickedPhoto picked) async {
-    final format = ImageFormat.detect(picked.bytes);
-    if (format == null) {
-      _photoNotice = PhotoNotice.unsupportedFormat;
+    try {
+      _photo = await preparePhoto(picked, _inspector, maxBytes: maxUploadBytes);
+    } on PhotoRejectedException catch (e) {
+      _photoNotice = photoNoticeForRejection(e.reason);
       return;
     }
-    if (picked.bytes.length > maxUploadBytes) {
-      _photoNotice = PhotoNotice.tooLarge;
-      return;
-    }
-    final sanitized = removeLocationMetadata(picked.bytes, format);
-    final dimensions = await _inspector.dimensions(sanitized.bytes);
-    _photo = CapturedPhoto(
-      bytes: sanitized.bytes,
-      format: format,
-      source: picked.source,
-      dimensions: dimensions,
-      locationMetadataRemoved: sanitized.locationRemoved,
-    );
     _startNewSubmission();
   }
 
