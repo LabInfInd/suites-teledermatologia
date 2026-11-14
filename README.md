@@ -1,143 +1,137 @@
-# SUI.T.E.S. — app mobile
+# SUI.T.E.S. — teledermatologia
 
-**SUI.T.E.S.** (SUstaInable and smarT mEdical Shelter) è la piattaforma del progetto e la teledermatologia è uno dei suoi casi studio. Questa app Flutter per Android e iPhone è dedicata al caso studio di teledermatologia: acquisisce immagini dermatologiche e le invia a un server di classificazione.
+**SUI.T.E.S.** (SUstaInable and smarT mEdical Shelter) è la piattaforma del progetto e la teledermatologia è uno dei suoi casi studio. Questa repository contiene il server con l’interfaccia web e l’app Flutter per Android e iPhone: i pazienti inviano foto dermatologiche, i modelli le analizzano in privato e il medico valuta e decide che cosa comunicare.
 
-## Struttura
+**Stato: prototipo di ricerca, non validato per uso clinico.** Nessun risultato del modello autorizza una diagnosi automatica e nessun esito viene pubblicato al paziente senza la revisione del medico. L’istanza di prova usa solo account e immagini di prova.
 
-- `mobile/`: applicazione Flutter, con i progetti nativi Android e iOS.
-  - `lib/src/domain/`: modalità di acquisizione, codice caso, foto e invio.
-  - `lib/src/capture/`: acquisizione con `image_picker`, lettura delle dimensioni, rimozione della posizione GPS.
-  - `lib/src/api/`: interfaccia di invio, client HTTP e server simulato di sviluppo.
-  - `lib/src/config/`: configurazione del collegamento al server.
-  - `lib/src/ui/`: stato del flusso (`AcquisitionController`) e schermate.
-  - `config/server.example.json`: esempio di configurazione del server.
-  - `assets/images/`: simbolo del logo mostrato nell’app.
-  - `branding/`: logo ricevuto e immagini di partenza delle icone; `tool/genera_icone.sh` rigenera le icone Android e iOS.
-- `docs/api-contratto-proposta.md`: proposta di contratto API minimo per l’invio delle foto.
-- `docs/workstation-prompt.txt`: contesto e indicazioni per addestrare il modello per foto cliniche sulla workstation.
+Istanza attiva: **https://sisagen-cardio.poliba.it:11112** (HTTPS con certificato pubblico).
 
-La repository si trova in `SUITES/suites-mobile/`. La cartella `SUITES/suites-repo/` è una repository indipendente, esterna a questo progetto.
+## Componenti
 
-## Stato del progetto
+| Cartella | Contenuto | Documentazione |
+|---|---|---|
+| `server/` | Backend FastAPI, worker delle analisi, PostgreSQL, archivio immagini, interfaccia web (`server/app/static/`), modelli e Grad-CAM | [server/README.md](server/README.md) |
+| `mobile/` | App Flutter con i progetti nativi Android e iOS | [mobile/README.md](mobile/README.md) |
+| `docs/` | Contratto API condiviso e indicazioni per l’addestramento del modello clinico | [docs/api-contratto-proposta.md](docs/api-contratto-proposta.md) |
 
-Il primo flusso dell’app è implementato, con interfaccia in italiano:
+Specifiche di riferimento: [contratto 2 dei casi e Grad-CAM](server/docs/CASE_GRADCAM.md), [API mobile](server/docs/API_MOBILE.md), [verifiche del server](server/docs/VERIFICATION.md).
 
-1. scelta esplicita del tipo di acquisizione, foto clinica (`clinical`) o immagine dermatoscopica (`dermoscopic`);
-2. scatto con la fotocamera di sistema oppure scelta dalla galleria;
-3. anteprima ingrandibile, con dimensioni, peso e formato, e possibilità di sostituire o rimuovere la foto;
-4. codice caso pseudonimo e invio di foto e modalità al server;
-5. avanzamento, conferma di ricezione, errori e ritentativi.
+## Ruoli e accesso
 
-Endpoint, autenticazione e formato della risposta non sono ancora concordati: l’app implementa la [proposta di contratto API](docs/api-contratto-proposta.md), con un collegamento configurabile e separato dall’interfaccia. Senza server reale si può usare un server simulato interno all’app, sempre segnalato.
+| Ruolo | Web | App |
+|---|---|---|
+| Paziente | I propri casi | I propri casi |
+| Medico | Casi ricevuti e Analisi rapide | Casi ricevuti e Analisi rapida |
+| Amministratore | Account e registro | Non ammesso (solo web) |
 
-L’app non include modelli di classificazione e non produce risultati diagnostici: la conferma mostrata dopo l’invio attesta solo la ricezione della foto.
+Il login è unico: il ruolo arriva dal server. Il web usa cookie e CSRF; l’app usa un token `Bearer` tenuto solo in memoria e invia `X-Requested-With: Telederm` su ogni richiesta che non sia GET, senza cookie. Gli account si creano sulla VM o dal web dell’amministratore: nessun account predefinito e nessuna credenziale nel codice.
+
+## Flusso dei casi (contratto 2)
+
+1. **Il paziente crea il caso** scegliendo la modalità di acquisizione, che vale per tutte le foto del caso:
+   - `clinical`: smartphone normale, anche foto ravvicinate o macro;
+   - `dermoscopic`: dermatoscopio oppure smartphone con adattatore dermatoscopico.
+
+   La modalità è obbligatoria e non viene mai dedotta dalla foto.
+2. **Aggiunge da una a quattro foto** (JPEG, PNG, WebP, HEIC/HEIF, fino a 40 MiB e 25 MP) e invia il caso. Il server sceglie il modello predefinito della modalità.
+3. **Il modello analizza le foto in privato:** classificazione, Grad-CAM e, solo con il modello dermatoscopico FTN, segmentazione separata. Il paziente non vede mai punteggi o analisi preliminari.
+4. **Il medico esamina** le foto e le mappe. Può ripetere l’analisi scegliendo modalità, modello del catalogo e classe da spiegare con Grad-CAM; nei casi storici senza modalità deve prima confermarla.
+5. **Il medico pubblica la valutazione:** conferma, correzione o richiesta di nuove foto. La condivisione della Grad-CAM e quella della segmentazione sono due consensi espliciti e indipendenti. La Grad-CAM si può condividere solo se tutte le foto hanno la mappa per la classe finale: se la classe viene corretta, il medico ricalcola le mappe per quella classe e le esamina prima di pubblicare. Una classe fuori catalogo si pubblica solo come testo.
+6. **Il paziente legge la risposta** e, se il medico l’ha condivisa, vede e può scaricare la foto composta con la Grad-CAM, insieme alla classe spiegata e all’avvertenza del server. Una nuova valutazione senza consenso revoca le mappe precedenti.
+
+Il medico dispone inoltre dell’**analisi rapida** dall’app: una singola foto con scelta del modello e risultato sperimentale immediato. È separata dai casi, è visibile solo al medico che l’ha inviata, compare anche nel web in «Analisi rapide» e non viene mai comunicata ai pazienti.
+
+Grad-CAM evidenzia le aree che influenzano la classificazione: non è il contorno della lesione, non è una probabilità per pixel e non è una segmentazione. Lo stato `no_positive_signal` non significa assenza di lesione.
 
 ## Avvio
 
-Ambiente verificato sul computer di sviluppo: Flutter 3.47.5, Dart 3.13.4 e Xcode 27.2. Il progetto richiede Dart 3.13.4 o successivo compatibile con il vincolo nel pubspec.
+**Server e web:** installazione con Docker, pesi dei modelli, HTTPS, account e aggiornamenti sono descritti in [server/README.md](server/README.md).
+
+**App:** ambiente verificato con Flutter 3.47.5, Dart 3.13.4 e Xcode 27.2.
 
 ```sh
 cd mobile
 flutter pub get
-flutter devices
 
-# Server simulato (solo build debug e profile)
-flutter run --dart-define=SUITES_SIMULATED_SERVER=true
+# Istanza del progetto
+flutter run --dart-define-from-file=config/server.sisagen.example.json
 
-# Server reale: copiare l’esempio e indicare l’indirizzo
+# Altro server: copiare l’esempio e indicare l’indirizzo
 cp config/server.example.json config/server.local.json
 flutter run --dart-define-from-file=config/server.local.json
+
+# Server simulato interno all’app (solo build debug e profile, solo analisi rapida)
+flutter run --dart-define=SUITES_SIMULATED_SERVER=true
 ```
 
-Senza configurazione l’app si avvia e consente di acquisire le foto, ma segnala “Server non configurato” e non permette l’invio.
+Per installare su un iPhone fisico serve la firma in Xcode. Se il terminale non ha il permesso «Rete locale» di macOS, `flutter run` in debug non riesce a collegarsi al telefono. In quel caso si può usare una build profile: `flutter build ios --profile --dart-define-from-file=…`, poi `xcrun devicectl device install app`. Per Android servono l’Android SDK e un dispositivo o emulatore; verificare con `flutter doctor`.
 
-Per iOS sono necessari Xcode e, per installare su un iPhone fisico, la configurazione della firma. Per Android sono necessari Android SDK e un dispositivo o emulatore. La configurazione completa delle due piattaforme va verificata con `flutter doctor`.
+## Configurazione dell’app
 
-## Configurazione del server
-
-La configurazione si passa in fase di build con `--dart-define` o `--dart-define-from-file` e contiene solo valori non segreti. I file `mobile/config/*.local.json` sono esclusi dal versionamento.
+La configurazione si passa a build time e contiene solo valori non segreti. I file `mobile/config/*.local.json` sono esclusi dal versionamento.
 
 | Variabile | Valori | Note |
 |---|---|---|
-| `SUITES_API_BASE_URL` | URL `https://…` | Indirizzo base; l’invio usa `{base}/v1/submissions`. `http://` è accettato solo nelle build debug e profile, per server locali; l’eventuale traffico in chiaro va abilitato nella configurazione Android/iOS, oggi non modificata. Non sono ammessi credenziali, query o frammenti nell’indirizzo. |
-| `SUITES_SIMULATED_SERVER` | `true` / `false` | Attiva il server simulato. Non può essere combinato con un indirizzo reale ed è rifiutato nelle build release. |
-| `SUITES_SIMULATED_SCENARIO` | `success`, `flaky`, `offline`, `rejected`, `server_error` | Comportamento del server simulato per provare conferme ed errori; predefinito `success`. |
+| `SUITES_API_BASE_URL` | URL `https://…` | Indirizzo base del server. `http://` è accettato solo nelle build debug e profile, per server locali. Non sono ammessi credenziali, query o frammenti. |
+| `SUITES_SIMULATED_SERVER` | `true` / `false` | Server simulato per l’analisi rapida, sempre segnalato da un banner giallo; non combinabile con un indirizzo reale e rifiutato nelle build release. |
+| `SUITES_SIMULATED_SCENARIO` | `success`, `flaky`, `offline`, `rejected`, `server_error` | Comportamento del server simulato; predefinito `success`. |
 
-Il server simulato sostituisce la rete all’interno dell’app: le foto non lasciano il telefono. È riconoscibile da un banner giallo “SERVER SIMULATO” sempre visibile, da conferme intitolate “Ricezione confermata (SIMULATA)” e da riferimenti che iniziano con `SIMULATO-`.
+Credenziali e token non vanno mai inseriti nel codice né passati con `--dart-define`, che finisce nel binario dell’app.
 
-Credenziali e token non vanno mai inseriti nel codice né passati con `--dart-define`, che finisce nel binario dell’app. L’autenticazione è ancora da definire: il client supporta già un token `Bearer` fornito a runtime (vedi la proposta di contratto).
+## Foto, privacy e permessi
 
-## Fotocamera e qualità delle immagini
-
-- Scatto e galleria usano `image_picker`, che apre la fotocamera e la galleria di sistema. L’app **non controlla** obiettivo, messa a fuoco, esposizione, flash, zoom o modalità macro e non può verificarne l’uso: dipendono dall’app fotocamera del telefono. Per questo l’app dà solo indicazioni, senza promettere controlli macro.
-- La modalità è dichiarata dall’operatore: una foto macro senza dermatoscopio resta una foto clinica; uno smartphone con adattatore dermatoscopico produce immagini dermatoscopiche.
-- L’app non ridimensiona e non ricomprime le foto. Su Android le foto della fotocamera sono il JPEG prodotto dall’app fotocamera e quelle della galleria il file originale (anche HEIC o WebP). Su iOS `image_picker` riscrive l’immagine in JPEG alla qualità massima conservando i metadati.
-- L’anteprima a schermo intero è ingrandibile per controllare la nitidezza (decodifica fino a 4096 px di lato, solo per la visualizzazione). Sotto i 1000 px di lato corto compare un avviso di risoluzione bassa, che non blocca l’invio e non rappresenta un requisito dei modelli.
-- Il preprocessing specifico dei modelli, compresa l’applicazione dell’orientamento EXIF, spetta al server.
-- Controlli reali su obiettivo macro o distanza di messa a fuoco richiederebbero una fotocamera integrata nell’app (plugin `camera` o codice nativo), da valutare dopo le prove sui telefoni effettivamente usati.
-
-## Privacy, permessi e log
-
-- La foto resta in memoria: la copia temporanea creata da `image_picker` viene eliminata dopo la lettura e l’app non salva immagini in galleria. Alcune app fotocamera Android potrebbero comunque conservarne una copia: va verificato sui telefoni in uso.
-- Dai JPEG viene rimossa la posizione GPS (directory GPS dell’EXIF e pacchetti XMP con coordinate) senza ricompressione e lasciando invariato l’orientamento. Per HEIC, PNG e WebP la rimozione spetta al server.
-- Il file viene inviato con un nome generico. Il codice caso deve essere un pseudonimo: l’app rifiuta valori con la struttura del codice fiscale.
-- L’app non scrive log: fotografie e token non vengono registrati. In caso di errore l’interfaccia mostra solo lo stato HTTP, il codice e il messaggio di errore del server.
-- Android: l’app dichiara solo il permesso `INTERNET`. Il permesso `CAMERA` non è dichiarato di proposito, perché l’app fotocamera di sistema non lo richiede alla nostra app; la galleria usa il selettore di sistema.
-- iOS: `Info.plist` contiene le descrizioni in italiano per fotocamera e foto e dichiara l’italiano come lingua dell’app (`CFBundleLocalizations`), perché anche i pulsanti delle schermate di sistema aperte dall’app siano in italiano. La galleria usa il selettore di sistema senza chiedere l’accesso all’intera libreria.
-- Se Android chiude l’app mentre la fotocamera è aperta, al riavvio la foto viene recuperata e l’operatore deve scegliere di nuovo il tipo di acquisizione.
-
-## Invio, errori e ritentativi
-
-- Ogni invio ha un identificativo UUID generato sul telefono e riusato nei ritentativi, così il server può evitare duplicati.
-- Errori di rete, timeout, `429` e `502`–`504` vengono ritentati automaticamente fino a 3 tentativi complessivi; gli altri errori mostrano un messaggio specifico. “Riprova invio” riusa lo stesso identificativo finché foto, modalità e codice caso non cambiano.
-- L’invio si può annullare; durante l’invio e dopo la conferma i dati non sono modificabili. Dopo la conferma si può acquisire una nuova foto per lo stesso caso oppure iniziare un nuovo caso.
-- L’invio non prosegue in background: se il sistema sospende l’app, l’invio può interrompersi e va ripetuto.
-
-## Logo e icona
-
-- Sotto l’icona compare il nome “SUI.T.E.S.”. L’intestazione dell’app mostra il simbolo del logo con la dicitura “Teledermatologia · caso studio”, e il pulsante informazioni riporta il nome esteso della piattaforma. Il colore del tema deriva dal blu del logo (`#126393`).
-- Il logo disponibile è un JPEG di 410×287 px (`mobile/branding/logo_sorgente.jpg`). Il simbolo è stato ripulito e ingrandito per ricavare icone e immagine dell’app: è una versione **provvisoria**, con bordi meno precisi dell’originale.
-- Quando sarà disponibile il file originale del logo (SVG, PDF o PNG ad alta risoluzione), vanno sostituiti:
-  - `mobile/branding/app_icon.png`: 1024×1024 px, simbolo su fondo bianco, senza trasparenza (icona iOS e icona Android tradizionale);
-  - `mobile/branding/app_icon_foreground.png`: 1024×1024 px, fondo trasparente, simbolo largo circa metà dell’immagine e centrato, perché resti visibile in tutte le forme dell’icona adattiva Android;
-  - `mobile/assets/images/suites_symbol.png`: simbolo su fondo trasparente, circa 600 px di larghezza.
-
-  Poi si rigenerano le icone con `mobile/tool/genera_icone.sh` (richiede macOS).
-- Gli identificativi tecnici non sono cambiati: pacchetto Dart `teledermatologia`, bundle identifier iOS e `applicationId` Android `it.teledermatologia.teledermatologia`. Vanno decisi prima della pubblicazione negli store: cambiarli dopo equivale a pubblicare un’app diversa.
+- **Acquisizione:** fotocamera e galleria usano `image_picker`, cioè le schermate di sistema. L’app non controlla obiettivo, messa a fuoco, flash o macro e non può verificarne l’uso. La modalità è dichiarata da chi acquisisce: una macro senza dermatoscopio resta `clinical`.
+- **Trattamento delle foto:** l’app non ridimensiona e non ricomprime. Dai JPEG rimuove la posizione GPS (EXIF e XMP) senza ricompressione; per gli altri formati la rimozione dei metadati spetta al server, che riscrive sempre una PNG senza metadati e applica l’orientamento EXIF.
+- **Conservazione sul telefono:** le foto restano in memoria e la copia temporanea di `image_picker` viene eliminata. L’app salva un’immagine solo quando il paziente sceglie di scaricare la foto composta con la Grad-CAM, tramite il foglio di condivisione di sistema.
+- **Codice caso e log:** nell’analisi rapida il codice caso deve essere un pseudonimo, e l’app rifiuta la struttura del codice fiscale. L’app non scrive log; in caso di errore mostra solo il messaggio del server.
+- **Permessi Android:** dichiara solo `INTERNET`.
+- **Permessi iOS:** `Info.plist` contiene le descrizioni in italiano per fotocamera, accesso alle foto e salvataggio in Foto, e dichiara l’italiano come lingua dell’app.
+- **Login:** i campi supportano incolla, compilazione automatica delle credenziali e visualizzazione della password.
 
 ## Verifiche
 
 ```sh
-cd mobile
-flutter analyze
-flutter test
+cd mobile && flutter analyze && flutter test
 ```
 
-Verificato il 12/11/2026 su questo computer:
+Verificato il 14/11/2026 sul computer di sviluppo:
 
 - `flutter analyze`: nessun problema.
-- `flutter test`: 68 test superati. Coprono regole del codice caso, riconoscimento dei formati, configurazione, rimozione GPS su JPEG sintetici, client HTTP (campi multipart, token, conferme non valide, stati HTTP, ritentativi, `Retry-After`, annullamento, timeout, avanzamento), server simulato, controller del flusso e interfaccia (flusso completo, permesso negato, scatto annullato, errore del server, annullamento dell’invio, server non configurato, codice fiscale rifiutato, intestazione e informazioni sulla piattaforma).
-- `flutter build ios --simulator --debug` riuscita; l’app si avvia sul simulatore iPhone SE (3ª generazione) e la schermata iniziale, con logo e banner del server simulato, si visualizza correttamente. Nella schermata Home compaiono la nuova icona e il nome “SUI.T.E.S.”.
-- Android non compilato: l’Android SDK non è installato su questo computer.
+- `flutter test`: 110 test superati, tutti con dati simulati locali. Coprono:
+  - modalità obbligatoria e casi storici;
+  - campi JSON e multipart; `Authorization` e `X-Requested-With` su scritture e download;
+  - isolamento dei ruoli;
+  - mappe prima e dopo la pubblicazione, revoca con 404, nessun doppio overlay della foto composta;
+  - ricalcolo Grad-CAM per la classe corretta con bozza conservata e consensi separati;
+  - errori 401, 409 e 422; incolla nel login;
+  - flussi già esistenti dell’analisi rapida.
+- `flutter build ios --profile`: riuscita. App installata su iPhone 14 Pro (iOS 27.2.1) e provata a mano sull’istanza del progetto, con esito positivo nei flussi principali di paziente e medico.
+- Prova automatica dei client dell’app sull’istanza reale (account di prova, contratto 1): paziente → caso → analisi → valutazione del medico → risposta al paziente, più l’analisi rapida. Per il contratto 2 è stato eseguito uno smoke test HTTPS di sola lettura: contratto annunciato, catalogo per modalità, 403 al paziente sul catalogo, campi del dettaglio.
+- Server: test e verifiche in [server/docs/VERIFICATION.md](server/docs/VERIFICATION.md).
+- Android non compilato: l’Android SDK non è installato sul computer di sviluppo.
 
-### Da verificare su dispositivi fisici
+### Ancora da verificare
 
-- Scatto su iPhone e Android, richieste di permesso, permesso negato e poi riattivato dalle Impostazioni, annullamento dalla fotocamera, lingua delle schermate di sistema.
-- Galleria: foto HEIC su Android (anteprima e invio) e selettore di sistema su iOS.
-- Comportamento macro dei telefoni in uso e acquisizione con adattatore dermatoscopico.
-- Recupero della foto dopo la chiusura dell’app da parte di Android ed eliminazione delle copie temporanee.
-- Memoria e fluidità con foto da 48 MP o più.
-- Rimozione GPS su foto reali, per esempio confrontando i file con `exiftool`.
-- Rete reale: cambio tra Wi-Fi e rete cellulare, app sospesa durante l’invio.
-- Build Android e firma release: `applicationId` e firma sono ancora quelli del template.
-- Icona adattiva Android con le diverse forme dei launcher.
+- **App su Android:** build, fotocamera e galleria (HEIC compreso), recupero della foto dopo la chiusura dell’app, icona adattiva, `applicationId` e firma release, che sono ancora quelli del template.
+- **App sui telefoni:**
+  - permessi negati e riattivati;
+  - salvataggio della foto composta in Foto;
+  - foto da 48 MP o più;
+  - comportamento macro e adattatore dermatoscopico;
+  - cambio di rete e app sospesa durante un invio.
+- **Rimozione dei metadati:** verifica su foto reali, per esempio con `exiftool`.
+- **Validazione clinica:** dei modelli su una coorte indipendente di pazienti, telefoni e condizioni di acquisizione del progetto, prima di qualunque uso con pazienti reali.
 
-### Da verificare con il server reale
+## Logo e identificativi
 
-- Implementazione del contratto, idempotenza, limiti di formato e dimensione.
-- Autenticazione, HTTPS e certificati.
-- Applicazione dell’orientamento EXIF e rimozione dei metadati di posizione lato server.
+- **Logo:** l’icona e l’intestazione usano il simbolo SUI.T.E.S. ricavato da un JPEG di 410×287 px (`mobile/branding/logo_sorgente.jpg`). È una versione provvisoria: con il file originale in alta risoluzione vanno sostituiti `mobile/branding/app_icon.png`, `mobile/branding/app_icon_foreground.png` e `mobile/assets/images/suites_symbol.png`. Poi si rigenerano le icone con `mobile/tool/genera_icone.sh` (richiede macOS).
+- **Identificativi tecnici:** pacchetto Dart `teledermatologia`, bundle identifier iOS e `applicationId` Android `it.teledermatologia.teledermatologia`. Vanno decisi prima della pubblicazione negli store.
 
-## Modelli sul server
+## Modelli
 
-Le foto cliniche da smartphone, anche macro, useranno un nuovo modello addestrato su dati clinici come PAD-UFES-20. Le immagini dermatoscopiche useranno il modello già disponibile addestrato su ISIC 2019. Uno smartphone con adattatore dermatoscopico appartiene al secondo percorso. Nessun modello viene eseguito sul telefono.
+| Modalità | Modelli | Classi | Segmentazione |
+|---|---|---|---|
+| `clinical` | ConvNeXt V2 tiny (predefinito), DINOv2 base | ACK, BCC, MEL, NEV, SCC, SEK | No |
+| `dermoscopic` | FTN | AK, BCC, BKL, DF, MEL, NV, VASC | Sì, separata da Grad-CAM |
+
+Nessuna equivalenza tra classi dei due percorsi: SEK non è BKL e NEV non è NV. Nessun modello viene eseguito sul telefono. Dettagli, pesi e manifest sono in [server/README.md](server/README.md).

@@ -1,54 +1,60 @@
-L istanza del progetto e ora disponibile su `https://sisagen-cardio.poliba.it:11112`.
-Per provarla, dalla cartella mobile usare:
+# App Flutter SUI.T.E.S.
 
-```bash
+App Android e iPhone per pazienti e medici del caso studio di teledermatologia. Panoramica della piattaforma, flusso dei casi, privacy e stato delle verifiche: [README della repository](../README.md). Contratto con il server: [CASE_GRADCAM.md](../server/docs/CASE_GRADCAM.md) e [API_MOBILE.md](../server/docs/API_MOBILE.md).
+
+## Avvio
+
+```sh
+flutter pub get
 flutter run --dart-define-from-file=config/server.sisagen.example.json
 ```
 
-Accedere con un account paziente o medico gia creato nella VM (gli account
-amministratore usano solo il web). Il certificato pubblico e
-verificato normalmente; nessuna eccezione TLS e richiesta. Le prove su telefoni
-fisici restano da eseguire e gli esiti rimangono sperimentali.
+Si accede con un account paziente o medico creato sulla VM; gli amministratori usano solo il web. Il certificato dell’istanza è pubblico e viene verificato normalmente. Configurazione e server simulato: vedi il README della repository.
 
-## Collegamento al server del progetto
+## Cosa fa
 
-Il server e in [../server/README.md](../server/README.md). Configurare soltanto
-SUITES_API_BASE_URL a build time; username/password si inseriscono nella schermata
-Accedi e il token resta in memoria. Il ruolo arriva dal server:
+- **Login unico:** il ruolo arriva da `POST /v1/session`. Il token resta in memoria. Ogni richiesta autenticata invia `Authorization: Bearer`, ogni richiesta non GET anche `X-Requested-With: Telederm`; mai cookie, Origin o CSRF. Dopo un 401 l’app torna al login; dopo un 409 ricarica il caso e mostra il messaggio del server.
+- **Paziente:** «I miei casi».
+  - **Creazione:** modalità di acquisizione obbligatoria e conferma dei dati di prova. La creazione è bloccata se `/api/status` non annuncia `case_contract_version: 2`.
+  - **Foto:** fino a quattro, da fotocamera o galleria.
+  - **Modalità:** correggibile in bozza (`PATCH /api/cases/{id}/acquisition`); nei casi storici con nuove foto richieste si può solo confermare quella mancante.
+  - **Risposta:** il paziente vede solo `reviews`, `published_explanations` e `published_segmentations`. La Grad-CAM è mostrata come foto composta (`composite_url`), senza un secondo overlay sopra, con la classe spiegata e l’avvertenza del server, ed è scaricabile con il token tramite il foglio di condivisione.
+  - **Mappe revocate:** un 404 rimuove la mappa senza riusare l’URL.
+  - **Accessi esclusi:** il paziente non chiama mai `/api/models` né `/v1/models` o `/v1/submissions`.
+- **Medico, «Casi ricevuti»:**
+  - **Viste separate** Foto / Grad-CAM (composite) / Segmentazione (solo FTN), con modello, versione e classe spiegata.
+  - **«Nuova analisi»:** modalità (obbligatoria per i casi storici), modello da `/api/models?mode=` e classe da spiegare.
+  - **Valutazione:** consensi `share_segmentation` e `share_explanation` separati, entrambi falsi finché il medico non li sceglie. La condivisione della Grad-CAM resta disattivata finché tutte le foto non hanno la mappa per la classe finale; nel frattempo c’è «Ricalcola Grad-CAM per «X»». Durante l’attesa la pagina si aggiorna da sola e conserva la bozza.
+  - **Classe fuori catalogo:** pubblicazione solo testuale.
+- **Medico, «Analisi rapida»:** acquisizione di una foto con scelta del modello, ricevuta, «Visualizza analisi sperimentale» (classificazione, Grad-CAM, segmentazione FTN) e storico da `/api/mobile-submissions`. Separata dai casi.
 
-- Paziente: I miei casi. Crea un caso scegliendo obbligatoriamente la modalita
-  di acquisizione (clinical: smartphone normale, anche macro; dermoscopic:
-  dermatoscopio o adattatore), con sede e note facoltative e conferma dei dati di
-  prova. La creazione e bloccata se `/api/status` non annuncia il contratto 2.
-  Aggiunge fino a quattro foto (posizione GPS rimossa dai JPEG), puo correggere la
-  modalita in bozza e confermare quella mancante dei casi storici, poi invia. Vede
-  solo valutazioni e mappe pubblicate dal medico: la foto composta con Grad-CAM
-  (`composite_url`, mai con un secondo overlay), la classe spiegata, l'avvertenza
-  del server e il download autenticato tramite il foglio di condivisione; la
-  segmentazione condivisa resta separata. Una mappa revocata (404) viene rimossa.
-  Nessun punteggio o analisi preliminare.
-- Medico: due sezioni. Casi ricevuti: elenco filtrabile, foto, analisi con viste
-  separate Foto/Grad-CAM (composite)/Segmentazione (solo FTN), modello e versione;
-  nuova analisi con modalita (obbligatoria per i casi storici), modello da
-  `/api/models` e classe da spiegare; valutazione (conferma, correzione o richiesta
-  di nuove foto) con consensi separati per segmentazione e Grad-CAM. Se la classe
-  finale non ha mappe su tutte le foto la condivisione e disabilitata e si offre il
-  ricalcolo per quella classe; la bozza resta durante l'aggiornamento automatico.
-  Classi fuori catalogo: pubblicazione solo testuale. Analisi rapida: invariata,
-  con scelta del modello, analisi sperimentale e storico (anche sul web).
+## Struttura
 
-Contratto di riferimento: `server/docs/CASE_GRADCAM.md` e `server/docs/API_MOBILE.md`.
-Gli endpoint usati sono quelli del web (`/api/status`, `/api/cases`, `/api/models`, `/api/mobile-submissions`)
-con `Authorization: Bearer` e `X-Requested-With: Telederm`, piu `/v1/session`,
-`/v1/models` e `/v1/submissions`: richiedono la versione del server che accetta il
-Bearer anche su `/api` e il contratto 2 dei casi.
+- `lib/src/api/`:
+  - `user_session.dart`: login e ruolo;
+  - `cases_api.dart`: endpoint `/api` dei casi, catalogo, stato e immagini autenticate;
+  - `http_submission_api.dart`: invii rapidi `/v1/submissions`;
+  - `simulated_server.dart`: server simulato.
+- `lib/src/domain/`:
+  - `patient_case.dart`: casi, analisi, mappe pubblicate, catalogo e stato del server;
+  - inoltre modalità di acquisizione, foto, codice caso e invio.
+- `lib/src/capture/`: `image_picker`, controllo di formato e dimensione, rimozione del GPS (`photo_preparation.dart`, `location_metadata.dart`).
+- `lib/src/ui/`:
+  - login e struttura per ruolo (`app.dart`, `doctor_home_page.dart`);
+  - elenco e dettaglio dei casi (`case_list_page.dart`, `case_detail_page.dart`);
+  - sezioni paziente e medico (`patient_case_sections.dart`, `doctor_case_sections.dart`);
+  - analisi rapida (`acquisition_page.dart`, `submission_result_page.dart`, `quick_history_page.dart`).
+- `test/`: test unitari e di interfaccia. `test/support/fake_platform_server.dart` è un server in memoria con le regole del contratto 2: nessuna richiesta di rete reale nei test.
+- `config/`: esempi di configurazione (`server.example.json`, `server.sisagen.example.json`); i file `*.local.json` restano locali.
+- `branding/`, `assets/images/`, `tool/genera_icone.sh`: logo e icone.
 
-HTTPS richiesto per dispositivi reali; la configurazione pubblica HTTP di prova
-esistente non basta per le policy di rete Android/iOS. La build simulata mantiene
-il flusso precedente e non finge di restituire analisi cliniche.
+Le dipendenze sono in `pubspec.yaml` e bloccate in `pubspec.lock`; `share_plus` serve al download delle mappe pubblicate. I percorsi locali degli SDK, i file generati e le credenziali di firma non fanno parte dei sorgenti.
 
-# Applicazione Flutter SUITES
+## Verifiche
 
-Questa cartella contiene il progetto Android e iOS. Per lo stato del lavoro, l’avvio e le verifiche, consultare il [README della repository](../README.md).
+```sh
+flutter analyze
+flutter test
+```
 
-Le dipendenze sono definite in `pubspec.yaml` e bloccate in `pubspec.lock`. I percorsi locali degli SDK, i file generati e le credenziali di firma non fanno parte dei sorgenti.
+Esiti aggiornati e prove ancora necessarie su Android e iPhone: sezione «Verifiche» del [README della repository](../README.md).
