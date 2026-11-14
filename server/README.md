@@ -116,6 +116,8 @@ COOKIE_SECURE=false. Questa eccezione non rende HTTP adatto ai dati dei pazienti
 
 ## HTTPS e account
 
+Per `https://sisagen-cardio.poliba.it:11112` e disponibile il [profilo dedicato](docs/HTTPS_11112.md), con certificato fornito dall amministratore o da un emettitore DNS-01. Il profilo e preparato ma non ancora attivo; rete e certificato restano da completare.
+
 Configurare DNS, certificato e proxy HTTPS prima dell uso da telefoni reali.
 Il profilo compose.https.yaml usa Caddy; configurare TELEDERM_DOMAIN e ACME_EMAIL e il routing delle
 porte secondo ops/Caddyfile e il file Compose. Un indirizzo IP HTTP esistente non

@@ -1,0 +1,12 @@
+{
+    # Certificato installato da un amministratore: nessun tentativo ACME su 11112.
+    auto_https off
+}
+
+https://{$TELEDERM_DOMAIN} {
+    tls /etc/telederm/tls/fullchain.pem /etc/telederm/tls/privkey.pem
+    request_body {
+        max_size 43MB
+    }
+    reverse_proxy api:8000
+}
