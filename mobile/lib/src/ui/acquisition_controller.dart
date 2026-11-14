@@ -70,6 +70,16 @@ class AcquisitionController extends ChangeNotifier {
   final int maxUploadBytes;
 
   AcquisitionMode? _mode;
+  String? _modelId;
+  String? get modelId => _modelId;
+
+  void selectModel(String? value) {
+    if (isLocked || value == _modelId) return;
+    _modelId = value;
+    _startNewSubmission();
+    _notify();
+  }
+
   CapturedPhoto? _photo;
   String _caseCode = '';
   bool _isPicking = false;
@@ -111,6 +121,7 @@ class AcquisitionController extends ChangeNotifier {
   void selectMode(AcquisitionMode mode) {
     if (isLocked || mode == _mode) return;
     _mode = mode;
+    _modelId = null;
     _startNewSubmission();
     _notify();
   }
@@ -132,14 +143,18 @@ class AcquisitionController extends ChangeNotifier {
     try {
       final picked = await _picker.pick(source);
       if (picked == null) {
-        _photoNotice = _photo == null ? PhotoNotice.cancelled : PhotoNotice.cancelledKeptPrevious;
+        _photoNotice = _photo == null
+            ? PhotoNotice.cancelled
+            : PhotoNotice.cancelledKeptPrevious;
       } else {
         await _accept(picked);
       }
     } on PhotoPickException catch (e) {
       _photoNotice = switch (e.kind) {
-        PhotoPickFailureKind.cameraPermissionDenied => PhotoNotice.cameraPermissionDenied,
-        PhotoPickFailureKind.photoPermissionDenied => PhotoNotice.photoPermissionDenied,
+        PhotoPickFailureKind.cameraPermissionDenied =>
+          PhotoNotice.cameraPermissionDenied,
+        PhotoPickFailureKind.photoPermissionDenied =>
+          PhotoNotice.photoPermissionDenied,
         PhotoPickFailureKind.cameraUnavailable => PhotoNotice.cameraUnavailable,
         PhotoPickFailureKind.alreadyActive => PhotoNotice.alreadyActive,
         PhotoPickFailureKind.unreadable => PhotoNotice.unreadable,
@@ -210,6 +225,7 @@ class AcquisitionController extends ChangeNotifier {
       caseCode: CaseCode.normalize(_caseCode),
       mode: mode,
       photo: photo,
+      modelId: _modelId,
     );
     final cancel = _cancelUpload = Completer<void>();
     _upload = const UploadInProgress();
@@ -232,7 +248,9 @@ class AcquisitionController extends ChangeNotifier {
       if (failure.kind == SubmissionFailureKind.conflict) _submissionId = null;
       result = UploadFailed(failure);
     } on Exception {
-      result = const UploadFailed(SubmissionFailure(SubmissionFailureKind.unknown));
+      result = const UploadFailed(
+        SubmissionFailure(SubmissionFailureKind.unknown),
+      );
     }
     if (identical(_cancelUpload, cancel)) _cancelUpload = null;
     _upload = result;
@@ -258,6 +276,7 @@ class AcquisitionController extends ChangeNotifier {
   void startNewCase() {
     if (isUploading) return;
     _mode = null;
+    _modelId = null;
     _caseCode = '';
     startNewPhotoForSameCase();
   }

@@ -15,14 +15,16 @@ void main() {
   late AcquisitionController controller;
   var idCounter = 0;
 
-  AcquisitionController create({bool withServer = true, int maxUploadBytes = 1 << 20}) =>
-      AcquisitionController(
-        picker: picker,
-        inspector: FakeImageInspector(),
-        api: withServer ? api : null,
-        maxUploadBytes: maxUploadBytes,
-        newSubmissionId: () => 'id-${++idCounter}',
-      );
+  AcquisitionController create({
+    bool withServer = true,
+    int maxUploadBytes = 1 << 20,
+  }) => AcquisitionController(
+    picker: picker,
+    inspector: FakeImageInspector(),
+    api: withServer ? api : null,
+    maxUploadBytes: maxUploadBytes,
+    newSubmissionId: () => 'id-${++idCounter}',
+  );
 
   Future<void> readyToSubmit() async {
     controller.selectMode(AcquisitionMode.clinical);
@@ -40,6 +42,23 @@ void main() {
 
   tearDown(() => controller.dispose());
 
+  test('cambiare modello genera un nuovo invio e cambiare modalita azzera il modello', () async {
+    await readyToSubmit();
+    api.handler = (_, _, _) async =>
+        throw const SubmissionFailure(SubmissionFailureKind.network);
+    controller.selectModel('clinical-convnextv2-tiny');
+    await controller.submit();
+    controller.selectModel('clinical-dinov2-base');
+    await controller.submit();
+    expect(api.requests.map((r) => r.submissionId), ['id-1', 'id-2']);
+    expect(api.requests.map((r) => r.modelId), [
+      'clinical-convnextv2-tiny',
+      'clinical-dinov2-base',
+    ]);
+    controller.selectMode(AcquisitionMode.dermoscopic);
+    expect(controller.modelId, isNull);
+  });
+
   group('acquisizione', () {
     test('richiede prima la scelta del tipo di acquisizione', () async {
       expect(controller.canAcquire, isFalse);
@@ -50,19 +69,22 @@ void main() {
       expect(controller.canAcquire, isTrue);
     });
 
-    test('conserva la foto scattata con formato, origine e dimensioni', () async {
-      controller.selectMode(AcquisitionMode.clinical);
-      picker.enqueue(pickedPng());
+    test(
+      'conserva la foto scattata con formato, origine e dimensioni',
+      () async {
+        controller.selectMode(AcquisitionMode.clinical);
+        picker.enqueue(pickedPng());
 
-      await controller.acquire(PhotoSource.camera);
+        await controller.acquire(PhotoSource.camera);
 
-      final photo = controller.photo!;
-      expect(picker.requests, [PhotoSource.camera]);
-      expect(photo.format, ImageFormat.png);
-      expect(photo.source, PhotoSource.camera);
-      expect(photo.dimensions?.width, 4032);
-      expect(controller.photoNotice, isNull);
-    });
+        final photo = controller.photo!;
+        expect(picker.requests, [PhotoSource.camera]);
+        expect(photo.format, ImageFormat.png);
+        expect(photo.source, PhotoSource.camera);
+        expect(photo.dimensions?.width, 4032);
+        expect(controller.photoNotice, isNull);
+      },
+    );
 
     test('segnala l’acquisizione in corso', () async {
       controller.selectMode(AcquisitionMode.clinical);
@@ -101,8 +123,12 @@ void main() {
       controller.selectMode(AcquisitionMode.clinical);
       picker
         ..enqueue(pickedPng())
-        ..enqueue(const PhotoPickException(PhotoPickFailureKind.cameraPermissionDenied))
-        ..enqueue(const PhotoPickException(PhotoPickFailureKind.photoPermissionDenied));
+        ..enqueue(
+          const PhotoPickException(PhotoPickFailureKind.cameraPermissionDenied),
+        )
+        ..enqueue(
+          const PhotoPickException(PhotoPickFailureKind.photoPermissionDenied),
+        );
       await controller.acquire(PhotoSource.camera);
       final previous = controller.photo;
 
@@ -120,7 +146,9 @@ void main() {
       controller.selectMode(AcquisitionMode.clinical);
       picker
         ..enqueue(PickedPhoto(bytes: gifBytes, source: PhotoSource.gallery))
-        ..enqueue(PickedPhoto(bytes: TestJpeg().build(), source: PhotoSource.gallery));
+        ..enqueue(
+          PickedPhoto(bytes: TestJpeg().build(), source: PhotoSource.gallery),
+        );
 
       await controller.acquire(PhotoSource.gallery);
       expect(controller.photoNotice, PhotoNotice.unsupportedFormat);
@@ -140,14 +168,20 @@ void main() {
       expect(controller.photo!.bytes, isNot(jpeg));
     });
 
-    test('recupera la foto persa da Android senza scegliere la modalità', () async {
-      picker.lostPhoto = PickedPhoto(bytes: pngBytes, source: PhotoSource.unknown);
-      await controller.recoverLostPhoto();
-      expect(controller.photo?.source, PhotoSource.unknown);
-      expect(controller.photoNotice, PhotoNotice.recovered);
-      expect(controller.mode, isNull);
-      expect(controller.canSubmit, isFalse);
-    });
+    test(
+      'recupera la foto persa da Android senza scegliere la modalità',
+      () async {
+        picker.lostPhoto = PickedPhoto(
+          bytes: pngBytes,
+          source: PhotoSource.unknown,
+        );
+        await controller.recoverLostPhoto();
+        expect(controller.photo?.source, PhotoSource.unknown);
+        expect(controller.photoNotice, PhotoNotice.recovered);
+        expect(controller.mode, isNull);
+        expect(controller.canSubmit, isFalse);
+      },
+    );
   });
 
   group('invio', () {
@@ -169,23 +203,26 @@ void main() {
       expect(noServer.canSubmit, isFalse);
     });
 
-    test('invia i dati dichiarati e blocca le modifiche dopo la conferma', () async {
-      await readyToSubmit();
-      await controller.submit();
+    test(
+      'invia i dati dichiarati e blocca le modifiche dopo la conferma',
+      () async {
+        await readyToSubmit();
+        await controller.submit();
 
-      final sent = api.requests.single;
-      expect(sent.mode, AcquisitionMode.clinical);
-      expect(sent.caseCode, 'CASO-001');
-      expect(sent.submissionId, 'id-1');
-      expect(sent.photo, same(controller.photo));
-      expect(controller.upload, isA<UploadSucceeded>());
-      expect(controller.isLocked, isTrue);
+        final sent = api.requests.single;
+        expect(sent.mode, AcquisitionMode.clinical);
+        expect(sent.caseCode, 'CASO-001');
+        expect(sent.submissionId, 'id-1');
+        expect(sent.photo, same(controller.photo));
+        expect(controller.upload, isA<UploadSucceeded>());
+        expect(controller.isLocked, isTrue);
 
-      controller.selectMode(AcquisitionMode.dermoscopic);
-      controller.updateCaseCode('ALTRO');
-      expect(controller.mode, AcquisitionMode.clinical);
-      expect(controller.caseCode, '  CASO-001 ');
-    });
+        controller.selectMode(AcquisitionMode.dermoscopic);
+        controller.updateCaseCode('ALTRO');
+        expect(controller.mode, AcquisitionMode.clinical);
+        expect(controller.caseCode, '  CASO-001 ');
+      },
+    );
 
     test('mostra l’avanzamento durante l’invio', () async {
       await readyToSubmit();
@@ -209,35 +246,52 @@ void main() {
       expect(controller.isLocked, isTrue);
       expect(controller.canAcquire, isFalse);
 
-      response.complete(await FakeSubmissionApi.receiptFor(api.requests.single, null, null));
+      response.complete(
+        await FakeSubmissionApi.receiptFor(api.requests.single, null, null),
+      );
       await done;
       expect(controller.upload, isA<UploadSucceeded>());
     });
 
-    test('il nuovo tentativo riusa l’identificativo finché i dati non cambiano', () async {
-      await readyToSubmit();
-      api.handler = (_, _, _) async => throw const SubmissionFailure(SubmissionFailureKind.network);
+    test(
+      'il nuovo tentativo riusa l’identificativo finché i dati non cambiano',
+      () async {
+        await readyToSubmit();
+        api.handler = (_, _, _) async =>
+            throw const SubmissionFailure(SubmissionFailureKind.network);
 
-      await controller.submit();
-      expect((controller.upload as UploadFailed).failure.kind, SubmissionFailureKind.network);
-      expect(controller.isLocked, isFalse);
-      await controller.submit();
+        await controller.submit();
+        expect(
+          (controller.upload as UploadFailed).failure.kind,
+          SubmissionFailureKind.network,
+        );
+        expect(controller.isLocked, isFalse);
+        await controller.submit();
 
-      controller.updateCaseCode('CASO-002');
-      expect(controller.upload, isA<UploadIdle>());
-      api.handler = FakeSubmissionApi.receiptFor;
-      await controller.submit();
+        controller.updateCaseCode('CASO-002');
+        expect(controller.upload, isA<UploadIdle>());
+        api.handler = FakeSubmissionApi.receiptFor;
+        await controller.submit();
 
-      expect(api.requests.map((r) => r.submissionId), ['id-1', 'id-1', 'id-2']);
-    });
+        expect(api.requests.map((r) => r.submissionId), [
+          'id-1',
+          'id-1',
+          'id-2',
+        ]);
+      },
+    );
 
-    test('dopo un conflitto il nuovo tentativo usa un altro identificativo', () async {
-      await readyToSubmit();
-      api.handler = (_, _, _) async => throw const SubmissionFailure(SubmissionFailureKind.conflict);
-      await controller.submit();
-      await controller.submit();
-      expect(api.requests.map((r) => r.submissionId), ['id-1', 'id-2']);
-    });
+    test(
+      'dopo un conflitto il nuovo tentativo usa un altro identificativo',
+      () async {
+        await readyToSubmit();
+        api.handler = (_, _, _) async =>
+            throw const SubmissionFailure(SubmissionFailureKind.conflict);
+        await controller.submit();
+        await controller.submit();
+        expect(api.requests.map((r) => r.submissionId), ['id-1', 'id-2']);
+      },
+    );
 
     test('l’operatore può annullare l’invio', () async {
       await readyToSubmit();
@@ -255,20 +309,23 @@ void main() {
       expect(failure.canRetry, isTrue);
     });
 
-    test('nuova foto per lo stesso caso o nuovo caso dopo la conferma', () async {
-      await readyToSubmit();
-      await controller.submit();
+    test(
+      'nuova foto per lo stesso caso o nuovo caso dopo la conferma',
+      () async {
+        await readyToSubmit();
+        await controller.submit();
 
-      controller.startNewPhotoForSameCase();
-      expect(controller.photo, isNull);
-      expect(controller.mode, AcquisitionMode.clinical);
-      expect(controller.caseCode, '  CASO-001 ');
-      expect(controller.upload, isA<UploadIdle>());
-      expect(controller.submissionId, isNull);
+        controller.startNewPhotoForSameCase();
+        expect(controller.photo, isNull);
+        expect(controller.mode, AcquisitionMode.clinical);
+        expect(controller.caseCode, '  CASO-001 ');
+        expect(controller.upload, isA<UploadIdle>());
+        expect(controller.submissionId, isNull);
 
-      controller.startNewCase();
-      expect(controller.mode, isNull);
-      expect(controller.caseCode, isEmpty);
-    });
+        controller.startNewCase();
+        expect(controller.mode, isNull);
+        expect(controller.caseCode, isEmpty);
+      },
+    );
   });
 }

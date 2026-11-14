@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../api/simulated_server.dart';
+import '../api/operator_session.dart';
+import 'submission_result_page.dart';
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
 import '../domain/captured_photo.dart';
@@ -13,17 +15,25 @@ import 'photo_viewer_page.dart';
 
 /// Schermata unica del flusso: tipo di acquisizione, foto, codice caso, invio.
 class AcquisitionPage extends StatefulWidget {
-  const AcquisitionPage({super.key, required this.controller, required this.connection});
+  const AcquisitionPage({
+    super.key,
+    required this.controller,
+    required this.connection,
+    this.session,
+  });
 
   final AcquisitionController controller;
   final ServerConnection connection;
+  final OperatorSession? session;
 
   @override
   State<AcquisitionPage> createState() => _AcquisitionPageState();
 }
 
 class _AcquisitionPageState extends State<AcquisitionPage> {
-  late final _caseCode = TextEditingController(text: widget.controller.caseCode);
+  late final _caseCode = TextEditingController(
+    text: widget.controller.caseCode,
+  );
 
   AcquisitionController get _controller => widget.controller;
 
@@ -40,7 +50,9 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
 
   void _openViewer(CapturedPhoto photo) {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => PhotoViewerPage(bytes: photo.bytes)),
+      MaterialPageRoute<void>(
+        builder: (_) => PhotoViewerPage(bytes: photo.bytes),
+      ),
     );
   }
 
@@ -56,7 +68,9 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Invio in corso: annullalo prima di uscire.')),
+              const SnackBar(
+                content: Text('Invio in corso: annullalo prima di uscire.'),
+              ),
             );
           },
           child: Scaffold(
@@ -74,9 +88,12 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                         Text(
                           Brand.caseStudy,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                         ),
                       ],
                     ),
@@ -84,6 +101,17 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                 ],
               ),
               actions: [
+                if (widget.session != null)
+                  IconButton(
+                    tooltip: 'Esci',
+                    icon: const Icon(Icons.logout),
+                    onPressed: c.isUploading
+                        ? null
+                        : () {
+                            _startNewCase();
+                            widget.session!.logout();
+                          },
+                  ),
                 IconButton(
                   tooltip: 'Informazioni',
                   icon: const Icon(Icons.info_outline),
@@ -105,6 +133,39 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                       onSelected: () => c.selectMode(mode),
                     ),
                   if (c.mode case final mode?) _Guidance(mode.guidance),
+                  if (widget.session != null && c.mode != null) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey('model-${c.mode!.name}-${c.modelId}'),
+                      initialValue: c.modelId ?? '',
+                      decoration: const InputDecoration(
+                        labelText: 'Modello di ricerca',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Predefinito del server'),
+                        ),
+                        for (final model in widget.session!.models.where(
+                          (m) => m.mode == c.mode!.apiValue,
+                        ))
+                          DropdownMenuItem(
+                            value: model.id,
+                            child: Text(
+                              model.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: c.isLocked
+                          ? null
+                          : (value) => c.selectModel(
+                              value == null || value.isEmpty ? null : value,
+                            ),
+                      isExpanded: true,
+                    ),
+                  ],
                   const _SectionTitle('2. Foto'),
                   _PhotoSection(controller: c, onOpenViewer: _openViewer),
                   const _SectionTitle('3. Codice caso'),
@@ -120,11 +181,11 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                     maxLength: CaseCode.maxLength,
                     decoration: InputDecoration(
                       labelText: 'Codice caso',
-                      helperText:
-                          'Codice pseudonimo del caso: non inserire nome, cognome o codice fiscale.',
+                      helperText: 'Codice pseudonimo del caso: non inserire nome, cognome o codice fiscale.',
                       helperMaxLines: 2,
                       errorMaxLines: 3,
-                      errorText: c.caseCode.trim().isNotEmpty && caseCodeIssue != null
+                      errorText:
+                          c.caseCode.trim().isNotEmpty && caseCodeIssue != null
                           ? caseCodeIssueText(caseCodeIssue)
                           : null,
                       border: const OutlineInputBorder(),
@@ -136,6 +197,23 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                     onNewPhoto: c.startNewPhotoForSameCase,
                     onNewCase: _startNewCase,
                   ),
+                  if (widget.session != null && c.upload is UploadSucceeded)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => SubmissionResultPage(
+                              session: widget.session!,
+                              submissionId: (c.upload as UploadSucceeded)
+                                  .receipt
+                                  .submissionId,
+                            ),
+                          ),
+                        ),
+                        child: const Text('Visualizza analisi sperimentale'),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -151,7 +229,8 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
       _NoticeCard(
         icon: Icons.cloud_off_outlined,
         title: 'Server non configurato',
-        message: '${configurationIssueText(issue)} Puoi acquisire le foto, ma non inviarle.',
+        message:
+            '${configurationIssueText(issue)} Puoi acquisire le foto, ma non inviarle.',
         isError: true,
       ),
     ],
@@ -173,7 +252,9 @@ class _SectionTitle extends StatelessWidget {
         header: true,
         child: Text(
           text,
-          style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.primary),
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: theme.colorScheme.primary,
+          ),
         ),
       ),
     );
@@ -207,7 +288,10 @@ class _SimulatedServerBanner extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('SERVER SIMULATO', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    'SERVER SIMULATO',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 4),
                   const Text(
                     'Solo per sviluppo: le foto non lasciano il telefono e le conferme sono fittizie.',
@@ -240,7 +324,9 @@ class _NoticeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final foreground = isError ? scheme.onErrorContainer : scheme.onSecondaryContainer;
+    final foreground = isError
+        ? scheme.onErrorContainer
+        : scheme.onSecondaryContainer;
     return Card(
       margin: const EdgeInsets.only(top: 8),
       color: isError ? scheme.errorContainer : scheme.secondaryContainer,
@@ -255,7 +341,13 @@ class _NoticeCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: TextStyle(color: foreground, fontWeight: FontWeight.bold)),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: foreground,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(message, style: TextStyle(color: foreground)),
                 ],
@@ -291,7 +383,9 @@ class _ModeOption extends StatelessWidget {
         inMutuallyExclusiveGroup: true,
         checked: selected,
         child: Material(
-          color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
+          color: selected
+              ? scheme.primaryContainer
+              : scheme.surfaceContainerLow,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
@@ -308,7 +402,9 @@ class _ModeOption extends StatelessWidget {
               child: Row(
                 children: [
                   Icon(
-                    selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
                     color: enabled ? scheme.primary : scheme.outline,
                   ),
                   const SizedBox(width: 12),
@@ -318,7 +414,10 @@ class _ModeOption extends StatelessWidget {
                       children: [
                         Text(mode.label, style: theme.textTheme.titleSmall),
                         const SizedBox(height: 2),
-                        Text(mode.description, style: theme.textTheme.bodySmall),
+                        Text(
+                          mode.description,
+                          style: theme.textTheme.bodySmall,
+                        ),
                       ],
                     ),
                   ),
@@ -349,7 +448,11 @@ class _Guidance extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lightbulb_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
+          Icon(
+            Icons.lightbulb_outline,
+            size: 20,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 8),
           Expanded(child: Text(text, style: theme.textTheme.bodySmall)),
         ],
@@ -387,15 +490,23 @@ class _PhotoSection extends StatelessWidget {
           children: [
             FilledButton.tonalIcon(
               key: const ValueKey('acquire-camera'),
-              onPressed: c.canAcquire ? () => c.acquire(PhotoSource.camera) : null,
+              onPressed: c.canAcquire
+                  ? () => c.acquire(PhotoSource.camera)
+                  : null,
               icon: const Icon(Icons.photo_camera_outlined),
               label: Text(photo == null ? 'Scatta foto' : 'Scatta di nuovo'),
             ),
             OutlinedButton.icon(
               key: const ValueKey('acquire-gallery'),
-              onPressed: c.canAcquire ? () => c.acquire(PhotoSource.gallery) : null,
+              onPressed: c.canAcquire
+                  ? () => c.acquire(PhotoSource.gallery)
+                  : null,
               icon: const Icon(Icons.photo_library_outlined),
-              label: Text(photo == null ? 'Scegli dalla galleria' : 'Sostituisci dalla galleria'),
+              label: Text(
+                photo == null
+                    ? 'Scegli dalla galleria'
+                    : 'Sostituisci dalla galleria',
+              ),
             ),
             if (photo != null)
               TextButton.icon(
@@ -409,7 +520,10 @@ class _PhotoSection extends StatelessWidget {
         if (c.mode == null && !c.isLocked)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text('Seleziona prima il tipo di acquisizione.', style: textTheme.bodySmall),
+            child: Text(
+              'Seleziona prima il tipo di acquisizione.',
+              style: textTheme.bodySmall,
+            ),
           ),
         if (notice != null)
           _InlineNotice(
@@ -526,7 +640,9 @@ class _PhotoDetails extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final dimensions = photo.dimensions;
     final summary = [
-      dimensions == null ? 'Dimensioni non disponibili' : formatDimensions(dimensions),
+      dimensions == null
+          ? 'Dimensioni non disponibili'
+          : formatDimensions(dimensions),
       formatBytes(photo.sizeInBytes),
       photo.format.label,
       photo.source.label,
@@ -545,7 +661,10 @@ class _PhotoDetails extends StatelessWidget {
             isError: true,
           ),
         if (photo.locationMetadataRemoved)
-          const _InlineNotice('Rimossi dalla foto i dati di posizione (GPS).', isError: false),
+          const _InlineNotice(
+            'Rimossi dalla foto i dati di posizione (GPS).',
+            isError: false,
+          ),
       ],
     );
   }
@@ -560,7 +679,9 @@ class _InlineNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = isError ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
+    final color = isError
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Semantics(
@@ -568,9 +689,18 @@ class _InlineNotice extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(isError ? Icons.warning_amber_rounded : Icons.info_outline, size: 18, color: color),
+            Icon(
+              isError ? Icons.warning_amber_rounded : Icons.info_outline,
+              size: 18,
+              color: color,
+            ),
             const SizedBox(width: 6),
-            Expanded(child: Text(text, style: theme.textTheme.bodySmall?.copyWith(color: color))),
+            Expanded(
+              child: Text(
+                text,
+                style: theme.textTheme.bodySmall?.copyWith(color: color),
+              ),
+            ),
           ],
         ),
       ),
@@ -598,7 +728,10 @@ class _SubmitSection extends StatelessWidget {
         onNewPhoto: onNewPhoto,
         onNewCase: onNewCase,
       ),
-      UploadInProgress(:final progress) => _ProgressCard(progress, onCancel: c.cancelUpload),
+      UploadInProgress(:final progress) => _ProgressCard(
+        progress,
+        onCancel: c.cancelUpload,
+      ),
       UploadFailed(:final failure) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -652,7 +785,10 @@ class _ProgressCard extends StatelessWidget {
     final (title, value) = switch (p?.phase) {
       null => ('Preparazione dell’invio…', null),
       SubmissionPhase.uploading => ('Invio della foto…', p!.fraction),
-      SubmissionPhase.awaitingResponse => ('In attesa della conferma del server…', null),
+      SubmissionPhase.awaitingResponse => (
+        'In attesa della conferma del server…',
+        null,
+      ),
       SubmissionPhase.waitingToRetry => (
         'Invio non riuscito: nuovo tentativo tra ${p!.retryIn?.inSeconds ?? 0} s…',
         null,
@@ -665,10 +801,18 @@ class _ProgressCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Semantics(liveRegion: true, child: Text(title, style: theme.textTheme.titleSmall)),
+            Semantics(
+              liveRegion: true,
+              child: Text(title, style: theme.textTheme.titleSmall),
+            ),
             const SizedBox(height: 12),
-            LinearProgressIndicator(value: value, semanticsLabel: 'Avanzamento dell’invio'),
-            if (p != null && p.phase == SubmissionPhase.uploading && p.totalBytes > 0) ...[
+            LinearProgressIndicator(
+              value: value,
+              semanticsLabel: 'Avanzamento dell’invio',
+            ),
+            if (p != null &&
+                p.phase == SubmissionPhase.uploading &&
+                p.totalBytes > 0) ...[
               const SizedBox(height: 8),
               Text(
                 '${(p.fraction! * 100).floor()}% · '
@@ -678,7 +822,10 @@ class _ProgressCard extends StatelessWidget {
             ],
             if (p != null && p.attempt > 1) ...[
               const SizedBox(height: 4),
-              Text('Tentativo ${p.attempt} di ${p.maxAttempts}', style: theme.textTheme.bodySmall),
+              Text(
+                'Tentativo ${p.attempt} di ${p.maxAttempts}',
+                style: theme.textTheme.bodySmall,
+              ),
             ],
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -695,7 +842,11 @@ class _ProgressCard extends StatelessWidget {
 }
 
 class _ReceiptCard extends StatelessWidget {
-  const _ReceiptCard({required this.receipt, required this.onNewPhoto, required this.onNewCase});
+  const _ReceiptCard({
+    required this.receipt,
+    required this.onNewPhoto,
+    required this.onNewCase,
+  });
 
   final SubmissionReceipt receipt;
   final VoidCallback onNewPhoto;
@@ -710,7 +861,9 @@ class _ReceiptCard extends StatelessWidget {
         : theme.colorScheme.onSecondaryContainer;
     return Card(
       key: const ValueKey('receipt'),
-      color: receipt.simulated ? Colors.amber.shade100 : theme.colorScheme.secondaryContainer,
+      color: receipt.simulated
+          ? Colors.amber.shade100
+          : theme.colorScheme.secondaryContainer,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: DefaultTextStyle.merge(
@@ -729,7 +882,9 @@ class _ReceiptCard extends StatelessWidget {
                         receipt.simulated
                             ? 'Ricezione confermata (SIMULATA)'
                             : 'Ricezione confermata dal server',
-                        style: theme.textTheme.titleMedium?.copyWith(color: foreground),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: foreground,
+                        ),
                       ),
                     ),
                   ],
@@ -737,11 +892,14 @@ class _ReceiptCard extends StatelessWidget {
               ),
               if (receipt.simulated) ...[
                 const SizedBox(height: 4),
-                const Text('Conferma fittizia del server simulato: nessuna foto è stata inviata.'),
+                const Text(
+                  'Conferma fittizia del server simulato: nessuna foto è stata inviata.',
+                ),
               ],
               const SizedBox(height: 12),
               _Field('Riferimento', receipt.serverReference ?? '—'),
-              if (receivedAt != null) _Field('Ricevuta il', formatDateTime(receivedAt)),
+              if (receivedAt != null)
+                _Field('Ricevuta il', formatDateTime(receivedAt)),
               _Field('Tipo di acquisizione', receipt.mode.label),
               _Field('Codice caso', receipt.caseCode),
               _Field('Identificativo invio', receipt.submissionId),
@@ -791,7 +949,10 @@ class _Field extends StatelessWidget {
       child: Text.rich(
         TextSpan(
           children: [
-            TextSpan(text: '$label: ', style: const TextStyle(fontWeight: FontWeight.w600)),
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
             TextSpan(text: value),
           ],
         ),
@@ -827,7 +988,10 @@ class _FailureCard extends StatelessWidget {
                   Icon(Icons.error_outline, color: scheme.onErrorContainer),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(text.title, style: style.copyWith(fontWeight: FontWeight.bold)),
+                    child: Text(
+                      text.title,
+                      style: style.copyWith(fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ],
               ),

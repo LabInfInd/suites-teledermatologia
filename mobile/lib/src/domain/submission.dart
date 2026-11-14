@@ -11,12 +11,14 @@ class SubmissionRequest {
     required this.caseCode,
     required this.mode,
     required this.photo,
+    this.modelId,
   });
 
   final String submissionId;
   final String caseCode;
   final AcquisitionMode mode;
   final CapturedPhoto photo;
+  final String? modelId;
 }
 
 /// Conferma che il server ha ricevuto e registrato la foto.
