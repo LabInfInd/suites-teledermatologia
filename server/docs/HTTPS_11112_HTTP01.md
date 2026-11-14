@@ -1,6 +1,6 @@
 # HTTPS 11112 con Let s Encrypt usando la porta pubblica 80
 
-Profilo preparato localmente il 14 novembre 2026. Non ancora attivato nella VM.
+**Profilo attivo nella VM dal 14 novembre 2026.** HTTPS pubblico verificato con certificato Let s Encrypt attendibile. Le sezioni seguenti descrivono installazione e verifica; non sono comandi da ripetere indiscriminatamente sull istanza attiva.
 Questa e la strada preferita se l inoltro HTTP sulla porta pubblica 80 e disponibile:
 non richiede modifiche DNS, purche il nome sisagen-cardio.poliba.it continui a
 risolvere all IP pubblico corretto e l uso del nome sia autorizzato.
@@ -139,3 +139,46 @@ redirect esplicito alla 11112 e rifiuto della configurazione senza email ACME.
 Non e stata fatta una richiesta di certificato e nessun servizio della VM e stato
 modificato per questi controlli. Le modifiche restano locali finche non viene
 ripristinato l accesso GitHub della workstation.
+
+## Attivazione completata
+
+Il 14 novembre il collegamento privato PC1-VM e tornato operativo dopo che l utente
+ha disabilitato e riabilitato la scheda Ethernet 3 del PC1. Il test TCP verso
+192.168.50.10:8000 usa ora il sorgente 192.168.50.2 e riesce. Anche HTTP pubblico
+sul nome host ha restituito 200. La causa del precedente guasto della scheda non
+e stata accertata; non e stato necessario riavviare Docker per ripristinare il link.
+
+Sul PC1 sono state aggiunte dall amministratore la regola portproxy
+10.50.3.17:11112 -> 192.168.50.10:8443 e la regola firewall TCP in ingresso
+Telederm-HTTPS-11112, limitata all indirizzo locale 10.50.3.17 e alla porta 11112.
+La regola della porta 80 e stata conservata. I tre percorsi VM diretta, PC1 e nome
+pubblico hanno risposto HTTP 200 su TLS 1.3 con verifica normale della catena e
+del nome, senza eccezioni di fiducia.
+
+Emissione staging HTTP-01 riuscita, seguita da emissione di produzione Let s
+Encrypt, issuer YE1, per sisagen-cardio.poliba.it. Il certificato iniziale scade
+il 12 febbraio 2027 alle 08:19:31 UTC; tale data si riferisce a questa emissione,
+non e una scadenza del servizio. Caddy gestisce i rinnovi automatici e il volume
+certificates resta persistente. La porta pubblica 80 deve rimanere inoltrata.
+
+Nella .env della VM e stato impostato:
+
+```dotenv
+COMPOSE_FILE=compose.yaml:compose.https-11112-http01.yaml
+```
+
+In questo modo anche i comandi ordinari `docker compose` e lo script di backup
+riusano il profilo HTTPS corretto. Non rimuovere questa impostazione durante
+aggiornamenti di .env. I valori privati esistenti sono stati mantenuti.
+
+La prova completa attraverso l URL HTTPS pubblico e riuscita per ConvNeXt V2 Tiny,
+DINOv2 Base e FTN: sessione medico, catalogo, ricevuta persistente, ritentativo
+idempotente, worker, classificazione, PNG protette e revoca della sessione. Solo
+FTN ha restituito anche la segmentazione separata. L account tecnico creato per
+questa prova e stato sospeso. Sono state usate esclusivamente immagini sintetiche;
+resta da verificare l app su telefoni fisici e la validazione clinica separata.
+
+La migrazione HTTPS ha conservato i conteggi dei record preesistenti. Backup di
+DB e immagini verificato con SHA-256 e configurazione precedente sono conservati
+nella VM; nessun backup o chiave privata e stato trasferito fuori dalla VM o
+incluso nel repository. L immagine gateway verificata e Caddy 2.11.9.

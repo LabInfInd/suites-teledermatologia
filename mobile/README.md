@@ -1,3 +1,14 @@
+L istanza del progetto e ora disponibile su `https://sisagen-cardio.poliba.it:11112`.
+Per provarla, dalla cartella mobile usare:
+
+```bash
+flutter run --dart-define-from-file=config/server.sisagen.example.json
+```
+
+Accedere con un account medico gia creato nella VM. Il certificato pubblico e
+verificato normalmente; nessuna eccezione TLS e richiesta. Le prove su telefoni
+fisici restano da eseguire e gli esiti rimangono sperimentali.
+
 ## Collegamento al server del progetto
 
 Il server e in [../server/README.md](../server/README.md). Configurare soltanto

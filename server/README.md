@@ -5,6 +5,9 @@ Flutter tramite `/v1/submissions`, permette la scelta esplicita del modello e
 restituisce classificazione, Grad-CAM e, dove disponibile, segmentazione separata.
 La web-app con revisione medica esistente usa `/api/` e rimane disponibile.
 
+**Istanza attiva dal 14 novembre 2026:** https://sisagen-cardio.poliba.it:11112 .
+Certificato Let s Encrypt emesso tramite HTTP-01 sulla porta pubblica 80; richiesta, rinnovo e dettagli di rete sono descritti nel [profilo HTTP-01](docs/HTTPS_11112_HTTP01.md).
+
 **Stato: prototipo di ricerca, non validato per uso clinico.** Nessuna accuracy,
 heatmap o soglia autorizza una diagnosi automatica. Prima dei pazienti reali servono
 HTTPS, gestione degli accessi/conservazione e validazione su una coorte indipendente
@@ -116,7 +119,7 @@ COOKIE_SECURE=false. Questa eccezione non rende HTTP adatto ai dati dei pazienti
 
 ## HTTPS e account
 
-Se la porta pubblica 80 arriva al gateway, usare il [profilo Let s Encrypt HTTP-01](docs/HTTPS_11112_HTTP01.md): richiesta e rinnovo automatici, HTTPS sulla 11112 e nessun uso dedicato della 443 pubblica. Il percorso attraverso PC1 deve ancora essere verificato.
+Se la porta pubblica 80 arriva al gateway, usare il [profilo Let s Encrypt HTTP-01](docs/HTTPS_11112_HTTP01.md): richiesta e rinnovo automatici, HTTPS sulla 11112 e nessun uso dedicato della 443 pubblica. Il percorso pubblico e stato verificato il 14 novembre 2026, insieme ad accesso medico, tre modelli e mappe via HTTPS.
 
 Per `https://sisagen-cardio.poliba.it:11112` e disponibile il [profilo dedicato](docs/HTTPS_11112.md), con certificato fornito dall amministratore o da un emettitore DNS-01. Il profilo e preparato ma non ancora attivo; rete e certificato restano da completare.
 

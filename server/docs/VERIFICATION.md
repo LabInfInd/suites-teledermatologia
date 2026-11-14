@@ -31,3 +31,15 @@ e HTTP 401 per /v1/models senza token. Gli indirizzi inoltrati 10.50.3.17 e
 che siano irraggiungibili da ogni rete: l inoltro del PC 1 e il percorso di rete
 vanno verificati prima delle prove da telefoni. Non sono state modificate regole
 di rete o firewall esterne alla VM. HTTPS resta da configurare separatamente.
+
+## Aggiornamento HTTPS del 14 novembre 2026
+
+La riabilitazione della scheda privata del PC1 ha ripristinato il percorso di rete.
+L indirizzo corrente e https://sisagen-cardio.poliba.it:11112 . HTTP-01 staging e
+produzione hanno avuto esito positivo; certificato pubblico Let s Encrypt e TLS
+1.3 verificati dalla workstation attraverso VM, PC1 e nome pubblico. Sono riusciti
+anche login medico, catalogo, invio, worker, classificazione e download delle mappe
+per tutti i tre modelli usando il solo indirizzo HTTPS pubblico. Il precedente
+resoconto dei timeout documenta lo stato prima del ripristino, non lo stato attuale.
+Il profilo attivo e compose.https-11112-http01.yaml; la .env della VM lo seleziona
+tramite COMPOSE_FILE. Nessun test finale dei modelli e stato riaperto.
