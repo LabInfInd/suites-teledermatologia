@@ -1,0 +1,29 @@
+{
+    email {$ACME_EMAIL}
+    # Il redirect automatico assumerebbe la porta pubblica 443; lo definiamo sotto.
+    auto_https disable_redirects
+}
+
+https://{$TELEDERM_DOMAIN} {
+    tls {
+        issuer acme {
+            dir {$ACME_DIRECTORY:https://acme-v02.api.letsencrypt.org/directory}
+            # Usa HTTP-01 sulla 80; non tenta la verifica TLS-ALPN sulla 443 pubblica.
+            disable_tlsalpn_challenge
+        }
+    }
+    request_body {
+        max_size 43MB
+    }
+    reverse_proxy api:8000
+}
+
+http://{$TELEDERM_DOMAIN} {
+    # Caddy intercetta prima le challenge ACME gestite per il dominio.
+    handle /health {
+        reverse_proxy api:8000
+    }
+    handle {
+        redir https://{$TELEDERM_DOMAIN}:{$TELEDERM_PUBLIC_HTTPS_PORT:11112}{uri} 308
+    }
+}

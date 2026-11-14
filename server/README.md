@@ -116,6 +116,8 @@ COOKIE_SECURE=false. Questa eccezione non rende HTTP adatto ai dati dei pazienti
 
 ## HTTPS e account
 
+Se la porta pubblica 80 arriva al gateway, usare il [profilo Let s Encrypt HTTP-01](docs/HTTPS_11112_HTTP01.md): richiesta e rinnovo automatici, HTTPS sulla 11112 e nessun uso dedicato della 443 pubblica. Il percorso attraverso PC1 deve ancora essere verificato.
+
 Per `https://sisagen-cardio.poliba.it:11112` e disponibile il [profilo dedicato](docs/HTTPS_11112.md), con certificato fornito dall amministratore o da un emettitore DNS-01. Il profilo e preparato ma non ancora attivo; rete e certificato restano da completare.
 
 Configurare DNS, certificato e proxy HTTPS prima dell uso da telefoni reali.

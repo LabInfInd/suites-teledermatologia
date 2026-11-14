@@ -4,7 +4,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    files = ["README.md", "Dockerfile", "compose.yaml", "compose.https.yaml", "compose.https-11112.yaml", ".env.example",
+    files = ["README.md", "Dockerfile", "compose.yaml", "compose.https.yaml", "compose.https-11112.yaml", "compose.https-11112-http01.yaml", ".env.example",
              ".gitignore", ".dockerignore", "alembic.ini", "requirements.in", "requirements.txt",
              "requirements-dev.txt", "pytest.ini", "Avvia-demo.cmd", "Ferma-demo.cmd", "Apri-piattaforma-VM.cmd"]
     for directory in ["app", "migrations", "model_integration", "scripts", "docs", "tests", "ops", "training"]:
