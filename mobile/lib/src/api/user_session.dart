@@ -52,7 +52,10 @@ class UserSession extends ChangeNotifier {
     final response = await _client
         .post(
           endpoint('/v1/session'),
-          headers: {'content-type': 'application/json'},
+          headers: {
+            'content-type': 'application/json',
+            'x-requested-with': 'Telederm',
+          },
           body: jsonEncode({'username': username, 'password': password}),
         )
         .timeout(const Duration(seconds: 30));
@@ -65,7 +68,8 @@ class UserSession extends ChangeNotifier {
         _ => 'Accesso non riuscito. Riprova più tardi.',
       });
     }
-    final data = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    final data =
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
     final token = data['access_token'];
     if (token is! String || token.isEmpty || data['token_type'] != 'Bearer') {
       throw const SessionFailure('Risposta di accesso non valida.');
@@ -102,7 +106,8 @@ class UserSession extends ChangeNotifier {
       throw const SessionFailure('Catalogo dei modelli non disponibile.');
     }
     final rows =
-        (jsonDecode(utf8.decode(catalog.bodyBytes)) as Map<String, dynamic>)['models']
+        (jsonDecode(utf8.decode(catalog.bodyBytes))
+                as Map<String, dynamic>)['models']
             as List<dynamic>;
     return rows
         .whereType<Map<String, dynamic>>()
@@ -119,8 +124,9 @@ class UserSession extends ChangeNotifier {
 
   static String? _serverMessage(http.Response response) {
     try {
-      final error =
-          (jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>)['error'];
+      final error = (jsonDecode(
+        utf8.decode(response.bodyBytes),
+      ) as Map<String, dynamic>)['error'];
       final message = error is Map<String, dynamic> ? error['message'] : null;
       return message is String && message.isNotEmpty ? message : null;
     } on FormatException {
@@ -136,7 +142,10 @@ class UserSession extends ChangeNotifier {
         await _client
             .delete(
               endpoint('/v1/session'),
-              headers: {'authorization': 'Bearer $old'},
+              headers: {
+                'authorization': 'Bearer $old',
+                'x-requested-with': 'Telederm',
+              },
             )
             .timeout(const Duration(seconds: 10));
       } catch (_) {
