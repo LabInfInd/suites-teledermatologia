@@ -71,7 +71,7 @@ def test_patient_case_lifecycle_and_doctor_validation_with_bearer(bearers, photo
     assert doctor.get("/api/cases").json()["items"][0]["id"] == case["id"]
     assert other.get(url).status_code == 404
     assert patient.get(case["images"][0]["url"]).status_code == 200
-    monkeypatch.setattr("app.worker.get_predictor", lambda: SyntheticPredictor())
+    monkeypatch.setattr("app.worker.get_mobile_predictor", lambda model_id: SyntheticPredictor())
     assert process_one()
     private = doctor.get(url).json()
     # Reanalysis also uses Bearer without CSRF.

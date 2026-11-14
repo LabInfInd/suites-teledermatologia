@@ -4,6 +4,13 @@ L invio resta compatibile con il client Flutter: `POST /v1/submissions` restitui
 una ricevuta persistente, non il risultato dell inferenza. HTTPS richiesto per dati
 reali. Le prove HTTP esistenti sono limitate a foto sintetiche e account di prova.
 
+## Casi paziente: contratto 2
+
+Vedere [CASE_GRADCAM.md](CASE_GRADCAM.md): nuovi casi con `mode` obbligatorio,
+`/api/models` per il medico, reanalyze per modello e classe da spiegare,
+`share_explanation` nella revisione e `published_explanations` per il paziente.
+Login e invii rapidi qui sotto rimangono invariati.
+
 ## Sessione paziente e medico
 
 `POST /v1/session`, JSON `{"username":"operatore","password":"..."}`.

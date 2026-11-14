@@ -2,6 +2,14 @@
 
 > **Implementato nel server del repository.** Il contratto di ricevuta descritto sotto resta retrocompatibile; la specifica corrente aggiunge autenticazione medico, `model_id`, catalogo, stato, risultati e mappe: [server/docs/API_MOBILE.md](../server/docs/API_MOBILE.md). Le sezioni storiche sulla autenticazione da definire sono superate da `/v1/session`. La conferma di ricezione resta distinta dall analisi.
 
+## Aggiornamento casi paziente: contratto 2
+
+Specifica implementata e prevalente: [Grad-CAM nei casi](../server/docs/CASE_GRADCAM.md).
+`mode` è obbligatorio sui nuovi casi. Il medico può scegliere modello e classe da
+spiegare, visionare Grad-CAM nel web e autorizzare la pubblicazione con
+`share_explanation`. Il paziente riceve soltanto `published_explanations` approvate.
+Prompt per il client: [PROMPT_APP_CASE_GRADCAM](../server/docs/PROMPT_APP_CASE_GRADCAM.md).
+
 ## App: pazienti e medici con Bearer
 
 Il login web resta unico per paziente, medico e amministratore, con un’area per
@@ -17,12 +25,12 @@ i controlli cookie, CSRF, origine e middleware del browser restano invariati.
 | Ruolo | Endpoint e risposta |
 |---|---|
 | Paziente e medico | `POST /v1/session` JSON `{username,password}` → 200 `{access_token,token_type:"Bearer",expires_at,user:{id,username,role,active}}`; `DELETE /v1/session` → 204 e revoca; `GET /api/status` |
-| Paziente | `GET /api/cases?offset=0`; `POST /api/cases` JSON `{body_site,notes,demo_confirmed:true}` → 201, dettaglio del caso; `GET /api/cases/{id}` |
+| Paziente | `GET /api/cases?offset=0`; `POST /api/cases` JSON `{mode,body_site,notes,demo_confirmed:true}` → 201, dettaglio del caso; `GET /api/cases/{id}` |
 | Paziente | `POST /api/cases/{id}/images` multipart `expected_version`, `file` → 201; `DELETE /api/cases/{id}/images/{image_id}` JSON `{expected_version}` → 200 (bozza); `POST /api/cases/{id}/submit` JSON `{expected_version}` → 200 |
 | Paziente | GET degli URL `images[].url` e `published_segmentations[].mask_url/overlay_url`, con lo stesso Bearer |
 | Medico | `GET /api/cases?offset=0`, `GET /api/cases/{id}` (include `analyses`); le bozze sono invisibili |
-| Medico | `POST /api/cases/{id}/reviews` JSON `{expected_version,decision,final_label,patient_message,share_segmentation}` → 201; decision: `approved`, `corrected`, `needs_images` (quest’ultima senza label/segmentazione) |
-| Medico | `POST /api/cases/{id}/reanalyze` JSON `{expected_version}`; GET `/api/cases/{id}/analyses/{run}/images/{image}/{mask|overlay}` |
+| Medico | `POST /api/cases/{id}/reviews` JSON `{expected_version,decision,final_label,patient_message,share_segmentation,share_explanation}` → 201; decision: `approved`, `corrected`, `needs_images` (quest’ultima senza label/segmentazione) |
+| Medico | `POST /api/cases/{id}/reanalyze` JSON `{expected_version,mode?,model_id?,explanation_target?}`; GET `/api/cases/{id}/analyses/{run}/images/{image}/{mask|overlay}` |
 | Solo medico | `/v1/models`, `/v1/submissions` e relativi dettagli/artifacts: inferenza diretta |
 | Solo medico | `GET /api/mobile-submissions?offset=0`, `GET /api/mobile-submissions/{id}` e relativi artifacts: storico degli invii rapidi propri |
 
@@ -34,10 +42,9 @@ usare la nuova `version` restituita; conflitti di `expected_version`: 409.
 **Foto dei casi:** JPEG, PNG, WebP, HEIC/HEIF, fino a **40 MiB** per file, almeno
 32 px per lato, massimo **25 megapixel** e quattro foto per caso. EXIF applicato,
 RGB/sRGB, salvataggio PNG senza metadati. `/api/status.max_upload_mb` è in MiB.
-Gli invii rapidi conservano il limite separato di **80 megapixel**. Il percorso
-dei casi usa l’integrazione FTN esistente: accettare nuovi formati non aggiunge la
-scelta clinical/dermoscopic ai casi e non rende una macro dermatoscopica.
-La scelta esplicita modalità/modello resta negli invii rapidi del medico.
+Gli invii rapidi conservano il limite separato di **80 megapixel**. I nuovi casi
+richiedono `mode`: clinical usa un classificatore clinico con Grad-CAM, dermoscopic
+usa FTN con segmentazione separata e Grad-CAM. Nessun fallback tra acquisizioni.
 
 Errori `/api`: `{"detail":"messaggio"}` (validazione: anche `errors`);
 errori `/v1`: `{"error":{"code":"...","message":"..."}}`.

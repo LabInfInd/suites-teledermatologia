@@ -24,3 +24,18 @@ def test_real_registry_classification_and_aligned_explanation(real_registry,mode
     assert result.explanation['method']=='gradcam'
     assert result.explanation['target_class']==max(result.classification['labels'],key=lambda r:r['score'])['label']
     assert result.explanation['status'] in {'available','no_positive_signal'}
+
+
+@pytest.mark.parametrize('model_id',['clinical-convnextv2-tiny','clinical-dinov2-base','dermoscopic-ftn'])
+def test_real_explicit_target_changes_explanation_without_changing_classifier(real_registry,model_id):
+    image=Image.new('RGB',(192,128),(180,140,120));ImageDraw.Draw(image).ellipse((60,30,132,98),fill=(85,47,31))
+    predictor=real_registry(model_id)
+    first=predictor.predict(image)
+    target=next(item['label'] for item in first.classification['labels'] if item['label']!=first.explanation['target_class'])
+    second=predictor.predict(image,target_class=target)
+    assert second.explanation['target_class']==target
+    assert second.classification['labels']==first.classification['labels']
+    assert second.heatmap.mode=='L' and second.heatmap.size==image.size
+    assert second.explanation['status'] in {'available','no_positive_signal'}
+    with pytest.raises(ValueError,match='Unsupported explanation class'):
+        predictor.predict(image,target_class='not-a-class')

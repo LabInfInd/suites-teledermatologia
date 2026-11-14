@@ -97,3 +97,62 @@ Restano da verificare l’app aggiornata su telefoni reali e la validazione clin
 indipendente. Il flusso dei casi mantiene l’integrazione FTN preesistente; la scelta
 di acquisizione clinical/dermoscopic e modello è disponibile negli invii rapidi del
 medico, non nei casi. Una macro clinica non va sostituita con inferenza FTN.
+
+
+## Contratto 2: Grad-CAM nei casi paziente — aggiornamento successivo del 14 novembre
+
+Il limite del precedente paragrafo (casi sempre FTN) è superato per le nuove
+analisi. I casi richiedono mode esplicito; gli storici restano senza modalità
+finché il medico non la conferma. Specifica: CASE_GRADCAM.md. Prompt per il client:
+PROMPT_APP_CASE_GRADCAM.md. Flutter non modificato da questo aggiornamento.
+
+- Windows Python 3.12.14, dipendenze modelli e tutti i pesi reali: **87 passed**,
+  202,91 secondi, **0 skipped**. Da server/:
+  `python -m pytest tests -x -ra --tb=short -p no:cacheprovider --basetemp=<nuova-cartella-temporanea> -o addopts=''`,
+  con MODEL_TEST_DIR impostato alla cartella privata dei pesi e MODEL_THREADS=8.
+- Immagine Docker Linux Python 3.12.16 con tutti i modelli reali: **87 passed**,
+  82,54 secondi, **0 skipped**, database e storage di test separati:
+  `python -m pytest -ra -c /checks/pytest.ini -p no:cacheprovider --basetemp=/tmp/test-run -o addopts='' /checks/tests`,
+  con MODEL_TEST_DIR=/models, MODEL_THREADS=8, PYTHONPATH=/checks:/app:/tmp/checkdeps.
+- I nuovi test verificano modalità obbligatoria, conferma degli storici, nessun
+  fallback clinico a FTN, modelli incompatibili, PNG L/RGBA/RGB allineate, pubblicazione
+  esplicita, consensi indipendenti, assenza dei punteggi al paziente, revoca degli URL
+  dopo una nuova revisione e corrispondenza della classe su tutte le foto. I test
+  reali dei tre modelli verificano che cambiare target Grad-CAM non alteri i punteggi
+  del classificatore. I file sigillati adapter.py/ftn.py sono rimasti identici.
+- Migrazione provata anche in PostgreSQL 17 su database temporaneo con record
+  sintetici: note, record e revisioni conservati; mode NULL e share_explanation false.
+  Il database temporaneo è stato eliminato al termine, quello del servizio non è
+  stato usato per questo test.
+- `node --check app/static/app.js`: superato. Browser locale con soli dati sintetici:
+  visibilità medico, correzione MEL→NEV, consenso disabilitato prima del ricalcolo,
+  nuova Grad-CAM NEV, bozza del messaggio conservata, pubblicazione e vista paziente
+  con foto/mappa caricate (288×192) e zero barre dei punteggi. Corretto lo stile
+  hidden affinché i comandi nascosti non siano visualizzati come pulsanti.
+
+Rilascio sulla VM: backup database/immagini verificato con SHA-256 e mantenuto
+sulla VM; migrazione additiva 20261114_case_explanations; nessuna attribuzione
+inferenziale della modalità ai casi storici. Conteggi dei record invariati durante
+la migrazione, .env e profilo HTTPS HTTP-01 conservati, API/worker sani.
+Il rollback conserva lo schema additivo e mantiene fermo il worker precedente,
+per impedire che elabori nuovi job clinici con il vecchio percorso FTN.
+
+Verifica HTTPS reale su sisagen-cardio.poliba.it:11112 con CA/hostname verificati,
+account di prova esistenti e due casi aggiuntivi con sole foto sintetiche:
+
+- Login paziente/medico 200; status case_contract_version=2; caso nuovo senza mode 422.
+- clinical: creazione 201, upload EXIF 201 e normalizzazione a 192×288, submit 200,
+  ConvNeXt completato senza segmentazione; medico legge Grad-CAM/overlay/composite 200,
+  paziente prima della pubblicazione 404 e nessun output preliminare nel dettaglio.
+- Condivisione per classe finale diversa dalla mappa: 409. Rianalisi DINOv2 per la
+  classe corretta 200/completed; pubblicazione 201; paziente legge tutte le mappe 200,
+  classe coerente con la revisione e nessun punteggio o analisi privata.
+- dermoscopic: FTN completato, maschera separata e Grad-CAM; pubblicazione con entrambi
+  i consensi 201 e mappe paziente 200. Nessuna conversione delle classi tra i percorsi.
+- Stessi casi letti con cookie del medico e del paziente via login web, 200; logout
+  204. Inferenza diretta paziente ancora 403, storico Analisi rapide medico 200.
+  Sessioni tecniche revocate al termine. Le prove live non cancellano gli storici.
+
+Restano la modifica del client Flutter e le prove su Android/iPhone reali, affidate
+all’altro agente tramite il prompt. Queste verifiche software e le immagini
+sintetiche non misurano accuratezza o validità clinica di mappe e classificazioni.

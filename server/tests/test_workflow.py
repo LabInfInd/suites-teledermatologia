@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.db import db_session
 from app.main import app
 from app.model_service import Prediction
+from model_integration.registry import ModelOutput
 from app.models import AnalysisRun
 from app.schemas import ImagePrediction, LabelScore
 from app.worker import process_one
@@ -16,17 +17,18 @@ from tests.conftest import new_case, submit
 
 class SyntheticPredictor:
     """Solo test: mai esposto dall'applicazione o attivabile con una richiesta HTTP."""
-    def predict(self,image):
-        return Prediction(
+    def predict(self,image,explain=True,target_class=None):
+        return ModelOutput(
             classification=ImagePrediction(model_name="fixture-sintetica",model_version="test",labels=[
-                LabelScore(label="CLASSE_DI_TEST_A",score=0.8),LabelScore(label="CLASSE_DI_TEST_B",score=0.2)]),
-            mask=Image.new("L",image.size,255),
+                LabelScore(label="CLASSE_DI_TEST_A",score=0.8),LabelScore(label="CLASSE_DI_TEST_B",score=0.2)]).model_dump(),
+            mask=Image.new("L",image.size,255), heatmap=Image.new("L",image.size,180),
+            explanation={"method":"gradcam","status":"available","target_class":target_class or "CLASSE_DI_TEST_A"},
         )
 
 
 def complete_analysis(monkeypatch,client,photo):
     case = submit(client,new_case(client,photo))
-    monkeypatch.setattr("app.worker.get_predictor",lambda: SyntheticPredictor())
+    monkeypatch.setattr("app.worker.get_mobile_predictor",lambda model_id: SyntheticPredictor())
     assert process_one()
     return client.get(f"/api/cases/{case['id']}").json()
 
@@ -158,10 +160,10 @@ def test_corrupt_and_oversized_uploads_rejected(clients):
 
 def test_invalid_model_output_fails_closed(clients,photo,monkeypatch):
     class BadModel:
-        def predict(self,image):
-            return Prediction(classification=ImagePrediction(model_name="test",model_version="1",labels=[LabelScore(label="TEST",score=1)]),mask=Image.new("L",(1,1)))
+        def predict(self,image,explain=True,target_class=None):
+            return ModelOutput(classification=ImagePrediction(model_name="test",model_version="1",labels=[LabelScore(label="TEST",score=1)]).model_dump(),mask=Image.new("L",(1,1)))
     patient = clients["patient"]; case = submit(patient,new_case(patient,photo))
-    monkeypatch.setattr("app.worker.get_predictor",lambda: BadModel())
+    monkeypatch.setattr("app.worker.get_mobile_predictor",lambda model_id: BadModel())
     assert process_one()
     private = clients["doctor"].get(f"/api/cases/{case['id']}").json()
     assert private["state"] == "analysis_failed"

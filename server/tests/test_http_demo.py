@@ -58,10 +58,10 @@ def test_institutional_http_login_and_csrf_remain_protected(environment,monkeypa
         assert 'httponly' in cookie and 'samesite=strict' in cookie and 'secure' not in cookie
         assert client.get('/api/me').status_code == 200
         client.headers['X-CSRF-Token']=response.json()['csrf_token']
-        assert client.post('/api/cases',json={'demo_confirmed':True}).status_code == 201
+        assert client.post('/api/cases',json={'demo_confirmed':True,'mode':'dermoscopic'}).status_code == 201
         assert client.get('/api/status').json()['http_demo'] is True
-        assert client.post('/api/cases',json={'demo_confirmed':True},headers={'Origin':'http://193.204.50.163'}).status_code == 403
-        assert client.post('/api/cases',json={'demo_confirmed':True},headers={'X-CSRF-Token':'invalid'}).status_code == 403
+        assert client.post('/api/cases',json={'demo_confirmed':True,'mode':'dermoscopic'},headers={'Origin':'http://193.204.50.163'}).status_code == 403
+        assert client.post('/api/cases',json={'demo_confirmed':True,'mode':'dermoscopic'},headers={'X-CSRF-Token':'invalid'}).status_code == 403
         assert client.get('/api/cases',headers={'Host':'193.204.50.163'}).status_code == 400
         assert client.get('/',headers={'Host':'193.204.50.163'}).status_code == 400
         assert client.get('/static/app.js',headers={'Host':'untrusted.invalid'}).status_code == 400
@@ -80,7 +80,7 @@ def test_private_and_public_http_addresses_can_be_authorized_together(environmen
         assert login.status_code == 200
         client.headers['X-CSRF-Token']=login.json()['csrf_token']
         assert client.get('/api/me').status_code == 200
-        assert client.post('/api/cases',json={'demo_confirmed':True}).status_code == 201
+        assert client.post('/api/cases',json={'demo_confirmed':True,'mode':'dermoscopic'}).status_code == 201
         assert client.get('/',headers={'Host':'untrusted.invalid'}).status_code == 400
-        assert client.post('/api/cases',json={'demo_confirmed':True},headers={'Origin':'http://untrusted.invalid'}).status_code == 403
+        assert client.post('/api/cases',json={'demo_confirmed':True,'mode':'dermoscopic'},headers={'Origin':'http://untrusted.invalid'}).status_code == 403
         assert client.post('/api/logout').status_code == 204

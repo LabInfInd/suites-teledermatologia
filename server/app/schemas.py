@@ -50,7 +50,11 @@ class UserActiveInput(Input):
     active: bool
 
 
+AcquisitionMode = Literal["clinical", "dermoscopic"]
+
+
 class CaseInput(Input):
+    mode: AcquisitionMode
     body_site: str = Field(default="", max_length=80)
     notes: str = Field(default="", max_length=4000)
     demo_confirmed: Literal[True]
@@ -60,11 +64,22 @@ class VersionInput(Input):
     expected_version: int = Field(ge=1)
 
 
+class AcquisitionInput(VersionInput):
+    mode: AcquisitionMode
+
+
+class ReanalyzeInput(VersionInput):
+    mode: AcquisitionMode | None = None
+    model_id: str | None = Field(default=None, min_length=1, max_length=100)
+    explanation_target: str | None = Field(default=None, min_length=1, max_length=160)
+
+
 class ReviewInput(VersionInput):
     decision: Literal["approved", "corrected", "needs_images"]
     final_label: str | None = Field(default=None, max_length=160)
     patient_message: str = Field(min_length=10, max_length=5000)
     share_segmentation: bool = False
+    share_explanation: bool = False
 
 
 class LabelScore(BaseModel):

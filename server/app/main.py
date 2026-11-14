@@ -11,12 +11,14 @@ from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.case_analysis import ARTIFACT_KEYS, explanation_ready, publication_matches, published_maps, run_data
+from model_integration.registry import resolve_model, public_catalog, CLINICAL_CLASSES, DERMOSCOPIC_CLASSES
 from app.config import get_settings
 from app.db import get_db, get_engine, new_id, now
 from app.imaging import InvalidImage, normalize_image, storage_path
 from app.middleware import SafetyMiddleware
 from app.models import AnalysisRun, AuditEvent, Case, CaseImage, LoginAttempt, LoginSession, MedicalReview, User
-from app.schemas import CaseInput, CreateUserInput, LoginInput, PasswordInput, ReviewInput, UserActiveInput, VersionInput
+from app.schemas import AcquisitionInput, ReanalyzeInput, CaseInput, CreateUserInput, LoginInput, PasswordInput, ReviewInput, UserActiveInput, VersionInput
 from app.security import (
     audit, check_password, COOKIE_NAME, current_user, digest, DUMMY_PASSWORD,
     hash_password, new_session, require_role,
@@ -85,28 +87,17 @@ def latest_run(db, case_id):
     return db.scalar(select(AnalysisRun).where(AnalysisRun.case_id == case_id).order_by(AnalysisRun.created_at.desc()).limit(1))
 
 
-def run_data(run, case_id):
-    images = []
-    for result in (run.result or {}).get("images", []):
-        base = f"/api/cases/{case_id}/analyses/{run.id}/images/{result['image_id']}"
-        images.append({
-            "image_id": result["image_id"], "input_sha256": result["input_sha256"],
-            "classification": result["classification"], "mask_url": f"{base}/mask", "overlay_url": f"{base}/overlay",
-        })
-    return {"id": run.id, "state": run.state, "failure_code": run.failure_code,
-            "created_at": iso(run.created_at), "finished_at": iso(run.finished_at), "images": images}
-
-
 def review_data(db, review):
     doctor = db.get(User, review.doctor_id)
     return {"id": review.id, "decision": review.decision, "final_label": review.final_label,
             "patient_message": review.patient_message, "share_segmentation": review.share_segmentation,
+            "share_explanation": review.share_explanation,
             "analysis_id": review.analysis_id, "doctor": doctor.username, "created_at": iso(review.created_at)}
 
 
 def case_data(db, case, user, details=False):
     images = list(db.scalars(select(CaseImage).where(CaseImage.case_id == case.id).order_by(CaseImage.created_at)))
-    data = {"id": case.id, "code": case_code(case), "body_site": case.body_site, "state": case.state,
+    data = {"id": case.id, "code": case_code(case), "mode": case.mode, "body_site": case.body_site, "state": case.state,
             "version": case.version, "image_count": len(images), "created_at": iso(case.created_at),
             "updated_at": iso(case.updated_at)}
     if user.role == "doctor":
@@ -121,15 +112,7 @@ def case_data(db, case, user, details=False):
             data["analyses"] = [run_data(run, case.id) for run in db.scalars(
                 select(AnalysisRun).where(AnalysisRun.case_id == case.id).order_by(AnalysisRun.created_at.desc()))]
         else:
-            # Il paziente riceve esclusivamente le maschere che il medico ha deciso di pubblicare.
-            data["published_segmentations"] = []
-            for review in reviews:
-                if review.share_segmentation and review.analysis_id and review.decision in {"approved", "corrected"}:
-                    run = db.get(AnalysisRun, review.analysis_id)
-                    data["published_segmentations"] = [
-                        {"image_id": result["image_id"], "overlay_url": result["overlay_url"], "mask_url": result["mask_url"]}
-                        for result in run_data(run, case.id)["images"]
-                    ]
+            data["published_segmentations"], data["published_explanations"] = published_maps(db, case, reviews)
     return data
 
 
@@ -208,7 +191,8 @@ def status(user: User = Depends(current_user)):
     settings = get_settings()
     return {"demo": True, "http_demo": bool(settings.http_demo_origins),
             "model": "not_installed" if settings.model_adapter == "disabled" else "configured",
-            "max_images": settings.max_images, "max_upload_mb": settings.max_upload_bytes / (1024 * 1024)}
+            "max_images": settings.max_images, "max_upload_mb": settings.max_upload_bytes / (1024 * 1024),
+            "case_contract_version": 2, "acquisition_modes": ["clinical", "dermoscopic"]}
 
 
 @app.get("/api/cases")
@@ -233,7 +217,7 @@ def list_cases(search: str = Query(default="", max_length=80), offset: int = Que
 @app.post("/api/cases", status_code=201)
 def create_case(payload: CaseInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
     require_role(user, "patient")
-    case = Case(patient_id=user.id, body_site=payload.body_site, notes=payload.notes)
+    case = Case(patient_id=user.id, body_site=payload.body_site, notes=payload.notes, mode=payload.mode)
     db.add(case)
     db.flush()
     audit(db, user, "case_created", case.id)
@@ -317,6 +301,43 @@ def read_image(case_id: str, image_id: str, user: User = Depends(current_user), 
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/models")
+def case_models(mode: str | None = Query(default=None, pattern="^(clinical|dermoscopic)$"),
+                user: User = Depends(current_user)):
+    require_role(user, "doctor")
+    return {"schema_version":1, "models":public_catalog(mode)}
+
+
+@app.patch("/api/cases/{case_id}/acquisition")
+def set_acquisition(case_id: str, payload: AcquisitionInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(user, "patient")
+    case = get_case(db, case_id, user, lock=True)
+    check_version(case, payload.expected_version)
+    if case.state not in {"draft", "needs_images"}:
+        raise HTTPException(409, "La modalità può essere modificata dal paziente solo prima dell’invio.")
+    if case.state == "needs_images" and case.mode and case.mode != payload.mode:
+        raise HTTPException(409, "Le foto già inviate mantengono la modalità dichiarata. Per una modalità diversa apri un nuovo caso.")
+    case.mode = payload.mode
+    touch(case)
+    audit(db, user, "acquisition_confirmed", case.id)
+    db.commit()
+    return case_data(db, case, user, details=True)
+
+
+def queue_case_analysis(db, case, images, *, mode, model_id=None, target=None):
+    if mode not in {"clinical", "dermoscopic"}:
+        raise HTTPException(409, "Conferma la modalità clinical o dermoscopic prima dell’analisi.")
+    try:
+        spec = resolve_model(mode, model_id)
+    except ValueError as exc:
+        raise HTTPException(400, "Modello sconosciuto o incompatibile con la modalità.") from exc
+    if target and target not in (CLINICAL_CLASSES if mode == "clinical" else DERMOSCOPIC_CLASSES):
+        raise HTTPException(400, "La classe richiesta per Grad-CAM non è prevista dal modello selezionato.")
+    db.add(AnalysisRun(case_id=case.id, image_ids=[image.id for image in images], mode=mode,
+                       model_id=spec["id"], explanation_target=target))
+    case.mode = mode
+
+
 @app.post("/api/cases/{case_id}/submit")
 def submit_case(case_id: str, payload: VersionInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
     require_role(user, "patient")
@@ -331,7 +352,7 @@ def submit_case(case_id: str, payload: VersionInput, user: User = Depends(curren
         last_review = db.scalar(select(MedicalReview).where(MedicalReview.case_id == case.id).order_by(MedicalReview.created_at.desc()).limit(1))
         if not any(image.created_at > last_review.created_at for image in images):
             raise HTTPException(400, "Aggiungi almeno una nuova foto richiesta dal medico.")
-    db.add(AnalysisRun(case_id=case.id, image_ids=[image.id for image in images]))
+    queue_case_analysis(db, case, images, mode=case.mode)
     case.state = "queued"
     touch(case)
     audit(db, user, "case_submitted", case.id)
@@ -340,14 +361,17 @@ def submit_case(case_id: str, payload: VersionInput, user: User = Depends(curren
 
 
 @app.post("/api/cases/{case_id}/reanalyze")
-def reanalyze(case_id: str, payload: VersionInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def reanalyze(case_id: str, payload: ReanalyzeInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
     require_role(user, "doctor")
     case = get_case(db, case_id, user, lock=True)
     check_version(case, payload.expected_version)
-    if case.state not in {"waiting_model", "analysis_failed", "awaiting_review"}:
+    if case.state not in {"waiting_model", "analysis_failed", "awaiting_review", "released"}:
         raise HTTPException(409, "Il caso non può essere analizzato in questo stato.")
     images = list(db.scalars(select(CaseImage).where(CaseImage.case_id == case.id).order_by(CaseImage.created_at)))
-    db.add(AnalysisRun(case_id=case.id, image_ids=[image.id for image in images]))
+    previous = latest_run(db, case.id)
+    mode = payload.mode or case.mode
+    model_id = payload.model_id or (previous.model_id if previous and previous.mode == mode else None)
+    queue_case_analysis(db, case, images, mode=mode, model_id=model_id, target=payload.explanation_target)
     case.state = "queued"
     touch(case)
     audit(db, user, "analysis_requested", case.id)
@@ -367,22 +391,33 @@ def review_case(case_id: str, payload: ReviewInput, user: User = Depends(current
         count = db.scalar(select(func.count()).select_from(CaseImage).where(CaseImage.case_id == case.id))
         if count >= get_settings().max_images:
             raise HTTPException(400, "Il caso contiene già quattro immagini. Per ulteriori foto aprire un nuovo caso di prova.")
-        if payload.final_label or payload.share_segmentation:
-            raise HTTPException(400, "La richiesta di foto non deve includere classificazioni o segmentazioni.")
+        if payload.final_label or payload.share_segmentation or payload.share_explanation:
+            raise HTTPException(400, "La richiesta di foto non deve includere classificazioni o mappe.")
         case.state = "needs_images"
     else:
         if case.state != "awaiting_review" or not run or run.state != "completed":
             raise HTTPException(409, "Per validare occorre prima un'analisi completata dal modello.")
+        if not case.mode or run.mode != case.mode or not run.model_id:
+            raise HTTPException(409, "Conferma la modalità di acquisizione e ripeti l’analisi prima di pubblicare.")
         if not payload.final_label:
             raise HTTPException(400, "Inserisci la classificazione da comunicare al paziente.")
         top_labels = {item["classification"]["labels"][0]["label"] for item in run.result["images"]}
         if payload.decision == "approved" and payload.final_label not in top_labels:
             raise HTTPException(400, "Per una classificazione diversa dalla predizione seleziona «Correggi».")
+        items = run.result["images"]
+        if payload.share_segmentation and not all(item.get("mask_key") and item.get("overlay_key") for item in items):
+            raise HTTPException(400, "La segmentazione non è disponibile per questo modello.")
+        if payload.share_explanation and not all(explanation_ready(item, payload.final_label) for item in items):
+            raise HTTPException(409, "Genera e verifica Grad-CAM per la classe finale su tutte le immagini prima di condividerla.")
+        if payload.share_explanation:
+            for item in items:
+                if not all(storage_path(item[key]).is_file() for key in ["heatmap_key","heatmap_overlay_key","heatmap_composite_key"]):
+                    raise HTTPException(409, "Le mappe Grad-CAM non sono disponibili nell’archivio. Ripeti l’analisi.")
         case.state = "released"
     review = MedicalReview(
         case_id=case.id, doctor_id=user.id, analysis_id=run.id if run and run.state == "completed" else None,
         decision=payload.decision, final_label=payload.final_label, patient_message=payload.patient_message,
-        share_segmentation=payload.share_segmentation,
+        share_segmentation=payload.share_segmentation, share_explanation=payload.share_explanation,
     )
     db.add(review)
     touch(case)
@@ -396,23 +431,31 @@ def read_artifact(case_id: str, run_id: str, image_id: str, kind: str,
                   user: User = Depends(current_user), db: Session = Depends(get_db)):
     case = get_case(db, case_id, user)
     run = db.get(AnalysisRun, run_id)
-    if not run or run.case_id != case.id or run.state != "completed" or kind not in {"mask", "overlay"}:
-        raise HTTPException(404, "Segmentazione non trovata.")
+    if not run or run.case_id != case.id or run.state != "completed" or kind not in ARTIFACT_KEYS:
+        raise HTTPException(404, "Mappa non trovata.")
+    result = next((item for item in (run.result or {}).get("images", []) if item["image_id"] == image_id), None)
+    key = result.get(ARTIFACT_KEYS[kind]) if result else None
+    if not key:
+        raise HTTPException(404, "Mappa non disponibile.")
     if user.role == "patient":
-        published = db.scalar(select(MedicalReview).where(
-            MedicalReview.case_id == case.id, MedicalReview.analysis_id == run.id,
-            MedicalReview.share_segmentation.is_(True), MedicalReview.decision.in_(["approved", "corrected"])))
-        if not published:
-            raise HTTPException(404, "Segmentazione non disponibile.")
-    result = next((item for item in run.result["images"] if item["image_id"] == image_id), None)
-    if result is None:
-        raise HTTPException(404, "Segmentazione non trovata.")
-    path = storage_path(result[f"{kind}_key"])
+        review = db.scalar(select(MedicalReview).where(MedicalReview.case_id == case.id).order_by(MedicalReview.created_at.desc()).limit(1))
+        if not publication_matches(case, review, run):
+            raise HTTPException(404, "Mappa non disponibile.")
+        if kind in {"mask", "overlay"}:
+            permitted = review.share_segmentation
+        else:
+            permitted = review.share_explanation and explanation_ready(result, review.final_label)
+        if not permitted:
+            raise HTTPException(404, "Mappa non disponibile.")
+    path = storage_path(key)
     if not path.is_file():
-        raise HTTPException(404, "Segmentazione non disponibile nell'archivio.")
-    audit(db, user, "segmentation_viewed", run.id)
+        raise HTTPException(404, "Mappa non disponibile nell’archivio.")
+    audit(db, user, "segmentation_viewed" if kind in {"mask","overlay"} else "explanation_viewed", run.id)
     db.commit()
-    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control":"no-store"},
+                        filename=f"gradcam-{image_id}.png" if kind == "heatmap_composite" else None,
+                        content_disposition_type="inline")
+
 
 
 @app.get("/api/admin/users")

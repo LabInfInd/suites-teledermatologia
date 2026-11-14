@@ -99,7 +99,7 @@ class TimmClinical:
         self.transform=T.Compose([T.Resize(224,interpolation=T.InterpolationMode.BICUBIC,antialias=True),T.ToTensor(),T.Normalize(inp['mean'],inp['std'])])
         self.target=self.model.blocks[-1].norm1 if m['model'].startswith('vit_') else self.model.stages[-1]
 
-    def predict(self,image,explain=True):
+    def predict(self,image,explain=True,target_class=None):
         import torch
         from .explain import gradcam,restore_cam
         image=ImageOps.exif_transpose(image).convert('RGB');w,h=image.size;side=max(w,h)
@@ -109,7 +109,8 @@ class TimmClinical:
             logits=self.model(x)
             if not torch.isfinite(logits).all():raise ValueError('Non-finite clinical output')
             scores=(logits/self.temperature).softmax(1)[0].tolist()
-        target=max(range(6),key=lambda i:scores[i]);heat=None;metadata=None
+        if target_class is not None and target_class not in CLINICAL_CLASSES:raise ValueError("Unsupported explanation class")
+        target=CLINICAL_CLASSES.index(target_class) if target_class is not None else max(range(6),key=lambda i:scores[i]);heat=None;metadata=None
         if explain:
             heat,status=restore_cam(gradcam(self.model,self.target,x,target),image.size,padded=True)
             metadata={'method':'gradcam','target_class':CLINICAL_CLASSES[target],'target_score':'pre-temperature class logit',
@@ -128,12 +129,13 @@ class FTNMobile:
         if bundle_path(spec)!=get_settings().model_dir:raise ValueError('FTN uses the legacy weights root')
         self.predictor=get_predictor()
 
-    def predict(self,image,explain=True):
+    def predict(self,image,explain=True,target_class=None):
         import numpy as np
         from .explain import gradcam,restore_cam
         p=self.predictor;output=p.predict(image);heat=None;metadata=None
         if explain:
-            target=max(range(len(output.classification.labels)),key=lambda i:output.classification.labels[i].score)
+            if target_class is not None and target_class not in p.labels:raise ValueError("Unsupported explanation class")
+            target=p.labels.index(target_class) if target_class is not None else max(range(len(output.classification.labels)),key=lambda i:output.classification.labels[i].score)
             x=p._tensor(np.asarray(image.convert('RGB')),p.classification_transform)
             transforms=[(lambda t:t,lambda a:a),(lambda t:t.flip(2),lambda a:a[::-1,:]),
                 (lambda t:t.flip(3),lambda a:a[:,::-1]),(lambda t:t.flip(2).flip(3),lambda a:a[::-1,::-1]),

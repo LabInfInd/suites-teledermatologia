@@ -71,8 +71,8 @@ def photo():
     return output.getvalue()
 
 
-def new_case(client, photo=None):
-    response = client.post("/api/cases",json={"body_site":"Sede di prova","notes":"Nota sintetica","demo_confirmed":True})
+def new_case(client, photo=None, mode="dermoscopic"):
+    response = client.post("/api/cases",json={"body_site":"Sede di prova","notes":"Nota sintetica","demo_confirmed":True,"mode":mode})
     assert response.status_code == 201, response.text
     case = response.json()
     if photo:

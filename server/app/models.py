@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import false, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, new_id, now
@@ -38,6 +38,7 @@ class Case(Base):
     patient_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     body_site: Mapped[str] = mapped_column(String(80), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     state: Mapped[str] = mapped_column(String(24), default="draft", index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -64,6 +65,9 @@ class AnalysisRun(Base):
     case_id: Mapped[str] = mapped_column(ForeignKey("cases.id", ondelete="CASCADE"), index=True)
     state: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     image_ids: Mapped[list] = mapped_column(JSON)
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    explanation_target: Mapped[str | None] = mapped_column(String(160), nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     failure_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -83,6 +87,7 @@ class MedicalReview(Base):
     final_label: Mapped[str | None] = mapped_column(String(160), nullable=True)
     patient_message: Mapped[str] = mapped_column(Text)
     share_segmentation: Mapped[bool] = mapped_column(Boolean, default=False)
+    share_explanation: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     __table_args__ = (CheckConstraint(
         "decision IN ('approved','corrected','needs_images')", name="review_decision"

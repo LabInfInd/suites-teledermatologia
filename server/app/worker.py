@@ -13,12 +13,17 @@ from app.db import db_session, get_engine, now
 from app.imaging import save_mask, storage_path
 from app.model_service import get_predictor, ModelUnavailable
 from app.models import AnalysisRun, AuditEvent, Case, CaseImage, MobileSubmission
-from app.mobile_worker import process_mobile_one
+from app.mobile_worker import process_mobile_one, colored_overlay, save_artifact
+from model_integration.registry import resolve_model, get_mobile_predictor
 from app.schemas import ImagePrediction
 
 
 log = logging.getLogger("telederm.worker")
 stopping = threading.Event()
+
+
+class AcquisitionModeRequired(ValueError):
+    pass
 
 
 def process_one() -> bool:
@@ -29,11 +34,15 @@ def process_one() -> bool:
             return False
         run.state = "running"
         run_id, case_id, image_ids = run.id, run.case_id, list(run.image_ids)
+        mode, model_id, target = run.mode, run.model_id, run.explanation_target
         db.commit()
     state, result, failure_code = "completed", None, None
     written_keys: list[str] = []
     try:
-        predictor = get_predictor()
+        if mode not in {"clinical", "dermoscopic"} or not model_id:
+            raise AcquisitionModeRequired()
+        spec = resolve_model(mode, model_id)
+        predictor = get_mobile_predictor(spec["id"])
         with db_session() as db:
             images = [db.get(CaseImage, image_id) for image_id in image_ids]
             if not images or any(image is None or image.case_id != case_id for image in images):
@@ -41,25 +50,41 @@ def process_one() -> bool:
         outputs = []
         for image_record in images:
             with Image.open(storage_path(image_record.storage_key)) as source:
-                prediction = predictor.predict(source.convert("RGB"))
-                classification = ImagePrediction.model_validate(prediction.classification)
-                # Ordinamento deterministico; il significato dei punteggi è definito dal modello.
-                classification.labels.sort(key=lambda item: item.score, reverse=True)
-                mask_key, overlay_key = save_mask(prediction.mask, source.size, f"{run_id}-{image_record.id}")
+                photo = source.convert("RGB")
+            prediction = predictor.predict(photo, explain=True, target_class=target)
+            classification = ImagePrediction.model_validate({k:v for k,v in prediction.classification.items()
+                if k in ImagePrediction.model_fields})
+            classification.labels.sort(key=lambda item: item.score, reverse=True)
+            item = {"image_id": image_record.id, "input_sha256": image_record.sha256,
+                    "classification": classification.model_dump(), "explanation": prediction.explanation or {"status":"not_available"}}
+            if prediction.mask is not None:
+                if not spec["segmentation"]:
+                    raise ValueError("Classifier returned an unexpected lesion mask")
+                mask_key, overlay_key = save_mask(prediction.mask, photo.size, f"{run_id}-{image_record.id}")
                 written_keys.extend([mask_key, overlay_key])
-                outputs.append({
-                    "image_id": image_record.id, "input_sha256": image_record.sha256,
-                    "classification": classification.model_dump(), "mask_key": mask_key,
-                    "overlay_key": overlay_key,
-                })
-        result = {"images": outputs}
+                item.update(mask_key=mask_key, overlay_key=overlay_key)
+            if prediction.heatmap is not None:
+                heatmap = prediction.heatmap
+                if heatmap.mode != "L" or heatmap.size != photo.size:
+                    raise ValueError("Grad-CAM alignment mismatch")
+                explanation = item["explanation"]
+                labels = {label.label for label in classification.labels}
+                if explanation.get("method") != "gradcam" or explanation.get("target_class") not in labels or (target and explanation["target_class"] != target):
+                    raise ValueError("Grad-CAM target mismatch")
+                overlay = colored_overlay(heatmap)
+                composite = Image.alpha_composite(photo.convert("RGBA"), overlay).convert("RGB")
+                for kind, value in [("heatmap",heatmap), ("heatmap_overlay",overlay), ("heatmap_composite",composite)]:
+                    key = f"artifacts/{run_id}-{image_record.id}-{kind}.png"
+                    written_keys.append(key)
+                    item[kind+"_key"] = save_artifact(value, key)
+            outputs.append(item)
+        result = {"mode":mode, "model_id":model_id, "images":outputs}
+    except AcquisitionModeRequired:
+        state, failure_code = "waiting_model", "acquisition_mode_required"
     except ModelUnavailable:
-        state = "waiting_model"
-        failure_code = "model_unavailable"
+        state, failure_code = "waiting_model", "model_unavailable"
     except Exception as exc:
-        state = "failed"
-        failure_code = "inference_error"
-        # Evitare nei log immagini, note, predizioni e messaggi provenienti dal modello.
+        state, failure_code = "failed", "inference_error"
         log.error("Analisi fallita (%s); controllare l'adattatore del modello.", type(exc).__name__)
     if state != "completed":
         for key in written_keys:
@@ -68,7 +93,7 @@ def process_one() -> bool:
         case = db.scalar(select(Case).where(Case.id == case_id).with_for_update())
         run = db.get(AnalysisRun, run_id)
         run.state, run.result, run.failure_code, run.finished_at = state, result, failure_code, now()
-        case.state = {"completed": "awaiting_review", "waiting_model": "waiting_model", "failed": "analysis_failed"}[state]
+        case.state = {"completed":"awaiting_review", "waiting_model":"waiting_model", "failed":"analysis_failed"}[state]
         case.version += 1
         case.updated_at = now()
         db.add(AuditEvent(action=f"analysis_{state}", target_id=run_id))
