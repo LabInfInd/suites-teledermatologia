@@ -151,7 +151,7 @@ def test_corrupt_and_oversized_uploads_rejected(clients):
     url = f"/api/cases/{case['id']}/images"
     response = patient.post(url,data={"expected_version":case["version"]},files={"file":("falso.jpg",b"<script>invalid</script>","image/jpeg")})
     assert response.status_code == 400
-    response = patient.post(url,headers={"Content-Length":str(13*1024*1024)},content=b"x")
+    response = patient.post(url,headers={"Content-Length":str(41*1024*1024)},content=b"x")
     assert response.status_code == 413
     assert patient.get(f"/api/cases/{case['id']}").json()["image_count"] == 0
 

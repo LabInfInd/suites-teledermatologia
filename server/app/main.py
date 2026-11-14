@@ -208,7 +208,7 @@ def status(user: User = Depends(current_user)):
     settings = get_settings()
     return {"demo": True, "http_demo": bool(settings.http_demo_origins),
             "model": "not_installed" if settings.model_adapter == "disabled" else "configured",
-            "max_images": settings.max_images, "max_upload_mb": 12}
+            "max_images": settings.max_images, "max_upload_mb": settings.max_upload_bytes / (1024 * 1024)}
 
 
 @app.get("/api/cases")
@@ -477,3 +477,5 @@ async def http_error(request,exc):
 
 from app.mobile_api import router as mobile_router
 app.include_router(mobile_router)
+from app.web_submissions import router as web_submissions_router
+app.include_router(web_submissions_router)

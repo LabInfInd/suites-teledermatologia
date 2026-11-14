@@ -16,7 +16,7 @@ class Settings:
     model_dir: Path
     http_demo_origins: tuple[str, ...] = ()
     max_images: int = 4
-    max_upload_bytes: int = 12 * 1024 * 1024
+    max_upload_bytes: int = 40 * 1024 * 1024
     max_image_pixels: int = 25_000_000
 
     @property

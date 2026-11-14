@@ -4,19 +4,25 @@ L invio resta compatibile con il client Flutter: `POST /v1/submissions` restitui
 una ricevuta persistente, non il risultato dell inferenza. HTTPS richiesto per dati
 reali. Le prove HTTP esistenti sono limitate a foto sintetiche e account di prova.
 
-## Sessione operatore
+## Sessione paziente e medico
 
 `POST /v1/session`, JSON `{"username":"operatore","password":"..."}`.
 Restituisce `access_token`, `token_type: Bearer`, `expires_at` e `user`.
-Solo account `doctor` attivi possono usare questa API: gli account paziente e
-amministratore non ricevono immagini o predizioni attraverso questa interfaccia.
+Il login accetta `patient` e `doctor` attivi. Il paziente usa `/api/cases`, senza
+predizioni non validate; catalogo e `/v1/submissions*` restano solo per il medico.
+L’amministratore usa il web: login mobile 403 e sessione cancellata.
 La sessione scade entro SESSION_HOURS (1-24, default 8); `DELETE /v1/session`
 revoca il token corrente. Il blocco dopo otto tentativi falliti in 15 minuti e
 condiviso con il login web. Password e token non entrano nei log. Nell app
 conservarli soltanto a runtime o in Keychain/Keystore, mai nel repository/build.
 
 Tutti gli endpoint seguenti richiedono `Authorization: Bearer <access_token>`.
-I cookie e CSRF della piattaforma web `/api/` continuano a funzionare separatamente.
+Le richieste non GET inviano anche `X-Requested-With: Telederm`. Con Bearer non
+servono cookie, Origin o CSRF; un token presente esclude il fallback al cookie.
+Le richieste browser con cookie conservano i controlli CSRF e origine.
+Il percorso paziente e la validazione del medico sono nel [README](../README.md)
+e nel [contratto condiviso](../../docs/api-contratto-proposta.md). Le foto dei casi
+accettano gli stessi formati e 40 MiB, ma massimo 25 MP (invii rapidi: 80 MP).
 
 ## Catalogo e scelta del modello
 

@@ -5,6 +5,9 @@ from pathlib import Path
 import warnings
 
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener
+
+register_heif_opener(thumbnails=False)
 
 from app.config import get_settings
 
@@ -25,17 +28,18 @@ def normalize_image(raw: bytes, *, max_upload_bytes=None, max_image_pixels=None,
     settings = get_settings()
     byte_limit = max_upload_bytes or settings.max_upload_bytes
     pixel_limit = max_image_pixels or settings.max_image_pixels
-    allowed_formats = formats or {"JPEG", "PNG"}
+    allowed_formats = formats or {"JPEG", "PNG", "WEBP", "HEIF"}
+    format_names = ", ".join({"WEBP": "WebP", "HEIF": "HEIC/HEIF"}.get(name, name) for name in sorted(allowed_formats))
     if not raw or len(raw) > byte_limit:
-        raise InvalidImage("La foto deve essere più piccola di 12 MB.")
+        raise InvalidImage(f"Carica una foto non vuota fino a {byte_limit / (1024 * 1024):g} MiB.")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(BytesIO(raw)) as check:
                 if check.format not in allowed_formats or getattr(check, "n_frames", 1) != 1:
-                    raise InvalidImage("Carica una singola immagine JPEG o PNG.")
+                    raise InvalidImage(f"Carica una singola immagine nei formati: {format_names}.")
                 if check.width * check.height > pixel_limit or min(check.size) < 32:
-                    raise InvalidImage("Dimensioni consentite: almeno 32 px per lato, massimo 25 megapixel.")
+                    raise InvalidImage(f"Dimensioni consentite: almeno 32 px per lato, massimo {pixel_limit / 1_000_000:g} megapixel.")
                 check.verify()
             with Image.open(BytesIO(raw)) as original:
                 image = ImageOps.exif_transpose(original)

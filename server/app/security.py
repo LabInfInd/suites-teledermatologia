@@ -42,14 +42,20 @@ def audit(db: Session, actor: User | None, action: str, target_id: str | None = 
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    raw_token = request.cookies.get(COOKIE_NAME)
+    authorization = request.headers.get("Authorization")
+    bearer = authorization is not None
+    if bearer:
+        scheme, _, token = authorization.partition(" ")
+        raw_token = token if scheme.lower() == "bearer" else None
+    else:
+        raw_token = request.cookies.get(COOKIE_NAME)
     session = db.get(LoginSession, digest(raw_token)) if raw_token else None
     if not session or session.expires_at <= now():
         raise HTTPException(401, "Accedi per continuare.")
     user = db.get(User, session.user_id)
     if not user or not user.active:
         raise HTTPException(401, "Account non attivo.")
-    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+    if not bearer and request.method not in {"GET", "HEAD", "OPTIONS"}:
         if not hmac.compare_digest(request.headers.get("X-CSRF-Token", ""), session.csrf_token):
             raise HTTPException(403, "Sessione non verificata. Ricarica la pagina.")
     request.state.login_session = session

@@ -31,10 +31,10 @@ def send(operator,photo,fields=None,media='image/jpeg'):
     return operator.post('/v1/submissions',data=fields or data(),files={'image':('image.jpg',photo,media)})
 
 
-def test_bearer_required_and_patient_login_forbidden(clients,photo):
+def test_bearer_required_and_patient_login_allowed(clients,photo):
     c=clients['anonymous']
     assert c.get('/v1/models').status_code==401
-    assert c.post('/v1/session',json={'username':'paziente.uno','password':PASSWORD}).status_code==403
+    assert c.post('/v1/session',json={'username':'paziente.uno','password':PASSWORD}).status_code==200
     assert send(c,photo).status_code==401
     wrong=c.post('/v1/session',json={'username':'medico.uno','password':'incorrect'})
     assert wrong.status_code==401 and 'error' in wrong.json()

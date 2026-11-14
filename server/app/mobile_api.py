@@ -1,4 +1,5 @@
 """Authenticated mobile contract: durable receipt, owner-scoped polling and artifacts."""
+from copy import deepcopy
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Literal
@@ -25,14 +26,18 @@ def error(status,code,message):
     raise HTTPException(status,detail={'code':code,'message':message})
 
 
-def mobile_user(request:Request,db:Session=Depends(get_db)):
+def session_user(request:Request,db:Session=Depends(get_db)):
     authorization=request.headers.get('authorization','')
     scheme,_,token=authorization.partition(' ')
     session=db.get(LoginSession,digest(token)) if scheme.lower()=='bearer' and token else None
     if not session or session.expires_at<=now():error(401,'unauthorized','Accesso scaduto o non valido.')
     user=db.get(User,session.user_id)
     if not user or not user.active:error(401,'unauthorized','Accesso scaduto o non valido.')
-    if user.role!='doctor':error(403,'forbidden','È richiesto un account operatore medico.')
+    return user
+
+
+def mobile_user(user:User=Depends(session_user)):
+    if user.role!='doctor':error(403,'forbidden','È richiesto un account medico.')
     return user
 
 
@@ -45,13 +50,13 @@ def mobile_session(payload:LoginInput,request:Request,db:Session=Depends(get_db)
     cookies=SimpleCookie();cookies.load(temporary.headers['set-cookie'])
     token=cookies['telederm_session'].value
     session=db.get(LoginSession,digest(token))
-    if data['user']['role']!='doctor':
-        db.delete(session);db.commit();error(403,'forbidden','È richiesto un account operatore medico.')
+    if data['user']['role']=='admin':
+        db.delete(session);db.commit();error(403,'forbidden',"Gli account amministratore usano l'interfaccia web.")
     return {'access_token':token,'token_type':'Bearer','expires_at':session.expires_at.isoformat()+'Z','user':data['user']}
 
 
 @router.delete('/session',status_code=204)
-def mobile_logout(request:Request,user:User=Depends(mobile_user),db:Session=Depends(get_db)):
+def mobile_logout(request:Request,user:User=Depends(session_user),db:Session=Depends(get_db)):
     token=request.headers['authorization'].partition(' ')[2]
     db.delete(db.get(LoginSession,digest(token)));db.commit()
     return Response(status_code=204)
@@ -68,9 +73,9 @@ def receipt(row):
         'server_reference':'SRV-'+row.id,'status_url':f'/v1/submissions/{row.id}'}
 
 
-def owned(db,submission_id,user):
+def owned(db,submission_id,user,*,on_error=error):
     row=db.get(MobileSubmission,submission_id)
-    if row is None or row.owner_id!=user.id:error(404,'not_found','Invio non trovato.')
+    if row is None or row.owner_id!=user.id:on_error(404,'not_found','Invio non trovato.')
     return row
 
 
@@ -142,23 +147,30 @@ async def submit(request:Request,response:Response,submission_id:str=Form(),mode
 
 @router.get('/submissions/{submission_id}')
 def status(submission_id:str,user:User=Depends(mobile_user),db:Session=Depends(get_db)):
-    row=owned(db,submission_id,user)
-    result=dict(row.result) if row.result else None
+    return submission_data(owned(db,submission_id,user))
+
+
+def submission_data(row,base='/v1/submissions'):
+    # Never rewrite the ORM JSON or expose persisted storage keys.
+    result=deepcopy(row.result) if row.state=='completed' and row.result else None
     if result:
-        base=f'/v1/submissions/{row.id}/artifacts/'
+        artifact_base=f'{base}/{row.id}/artifacts/'
         for name,value in list(result.get('artifacts',{}).items()):
-            result['artifacts'][name]=base+name
-    return {'submission_id':row.id,'mode':row.mode,'model_id':row.model_id,'state':row.state,
+            result['artifacts'][name]=artifact_base+name
+    return {'submission_id':row.id,'case_code':row.case_code,'mode':row.mode,'model_id':row.model_id,'state':row.state,
         'received_at':row.created_at.isoformat()+'Z','finished_at':row.finished_at.isoformat()+'Z' if row.finished_at else None,
         'failure_code':row.failure_code,'result':result,'intended_use':'research_only_external_validation_required'}
 
 
 @router.get('/submissions/{submission_id}/artifacts/{kind}')
 def artifact(submission_id:str,kind:str,user:User=Depends(mobile_user),db:Session=Depends(get_db)):
-    row=owned(db,submission_id,user)
+    return artifact_response(owned(db,submission_id,user),kind)
+
+
+def artifact_response(row,kind,*,on_error=error):
     artifacts=(row.result or {}).get('artifacts',{})
     if row.state!='completed' or kind not in {'normalized_image','heatmap','heatmap_overlay','segmentation_mask','segmentation_overlay'} or kind not in artifacts:
-        error(404,'not_found','Mappa non disponibile.')
+        on_error(404,'not_found','Mappa non disponibile.')
     path=storage_path(artifacts[kind])
-    if not path.is_file():error(404,'not_found','Mappa non disponibile.')
+    if not path.is_file():on_error(404,'not_found','Mappa non disponibile.')
     return FileResponse(path,media_type='image/png',headers={'Cache-Control':'no-store'})

@@ -33,8 +33,7 @@ nuova misura indipendente sul test. Il test storico non e stato riaperto.
 PanDerm non e attivato nel server: la sua valutazione locale non implica diritti
 di distribuzione o validazione clinica.
 
-Questa versione e pubblicata nel ramo `server/multimodel-gradcam`; dopo il merge
-in main si puo usare il clone predefinito.
+Il codice del server è in `server/` sul ramo `main` dello stesso repository dell’app.
 
 ## Prima installazione su Ubuntu con Docker
 
@@ -44,7 +43,7 @@ esistente ha circa 62 GiB RAM; per nuove macchine misurare memoria e latenza con
 modelli richiesti prima di dimensionare il servizio. Un solo worker per database.
 
 ```bash
-git clone --branch server/multimodel-gradcam https://github.com/LabInfInd/suites-teledermatologia.git
+git clone https://github.com/LabInfInd/suites-teledermatologia.git
 cd suites-teledermatologia/server
 python3 scripts/configure_vm.py
 # Installare i bundle e configurare .env come sotto.
@@ -121,7 +120,7 @@ COOKIE_SECURE=false. Questa eccezione non rende HTTP adatto ai dati dei pazienti
 
 Se la porta pubblica 80 arriva al gateway, usare il [profilo Let s Encrypt HTTP-01](docs/HTTPS_11112_HTTP01.md): richiesta e rinnovo automatici, HTTPS sulla 11112 e nessun uso dedicato della 443 pubblica. Il percorso pubblico e stato verificato il 14 novembre 2026, insieme ad accesso medico, tre modelli e mappe via HTTPS.
 
-Per `https://sisagen-cardio.poliba.it:11112` e disponibile il [profilo dedicato](docs/HTTPS_11112.md), con certificato fornito dall amministratore o da un emettitore DNS-01. Il profilo e preparato ma non ancora attivo; rete e certificato restano da completare.
+Per `https://sisagen-cardio.poliba.it:11112` e disponibile il [profilo dedicato](docs/HTTPS_11112.md), con certificato fornito dall amministratore o da un emettitore DNS-01. Questo profilo alternativo non è attivo: l’istanza usa il profilo HTTP-01 sopra.
 
 Configurare DNS, certificato e proxy HTTPS prima dell uso da telefoni reali.
 Il profilo compose.https.yaml usa Caddy; configurare TELEDERM_DOMAIN e ACME_EMAIL e il routing delle
@@ -129,6 +128,7 @@ porte secondo ops/Caddyfile e il file Compose. Un indirizzo IP HTTP esistente no
 soddisfa automaticamente TLS o le policy Android/iOS.
 
 ```bash
+sudo docker compose exec api python -m app.manage create-user --username paziente --role patient
 sudo docker compose exec api python -m app.manage create-user --username operatore --role doctor
 sudo docker compose exec api python -m app.manage create-user --username referente --role admin
 ```
@@ -138,7 +138,70 @@ Il login mobile restituisce un token temporaneo a runtime; le sessioni web riman
 cookie+CSRF. Gli invii mobili sono visibili solo all operatore che li ha creati.
 L amministratore gestisce account e registro, non acquisisce accesso ai dati clinici.
 
-## Contratto con Flutter
+## App: pazienti e medici con Bearer
+
+Il login web resta unico per paziente, medico e amministratore, con un’area per
+ruolo. Il login mobile accetta `patient` e `doctor` attivi; l’amministratore usa il
+web: `/v1/session` restituisce 403 e cancella la sessione appena creata.
+
+Ogni richiesta autenticata dell’app invia `Authorization: Bearer <token>`; ogni
+richiesta non GET invia anche `X-Requested-With: Telederm` (login/logout inclusi).
+Non servono cookie, Origin o X-CSRF-Token. Authorization è esclusivo: un token
+non valido restituisce 401 anche con un cookie valido. Senza Authorization,
+i controlli cookie, CSRF, origine e middleware del browser restano invariati.
+
+| Ruolo | Endpoint e risposta |
+|---|---|
+| Paziente e medico | `POST /v1/session` JSON `{username,password}` → 200 `{access_token,token_type:"Bearer",expires_at,user:{id,username,role,active}}`; `DELETE /v1/session` → 204 e revoca; `GET /api/status` |
+| Paziente | `GET /api/cases?offset=0`; `POST /api/cases` JSON `{body_site,notes,demo_confirmed:true}` → 201, dettaglio del caso; `GET /api/cases/{id}` |
+| Paziente | `POST /api/cases/{id}/images` multipart `expected_version`, `file` → 201; `DELETE /api/cases/{id}/images/{image_id}` JSON `{expected_version}` → 200 (bozza); `POST /api/cases/{id}/submit` JSON `{expected_version}` → 200 |
+| Paziente | GET degli URL `images[].url` e `published_segmentations[].mask_url/overlay_url`, con lo stesso Bearer |
+| Medico | `GET /api/cases?offset=0`, `GET /api/cases/{id}` (include `analyses`); le bozze sono invisibili |
+| Medico | `POST /api/cases/{id}/reviews` JSON `{expected_version,decision,final_label,patient_message,share_segmentation}` → 201; decision: `approved`, `corrected`, `needs_images` (quest’ultima senza label/segmentazione) |
+| Medico | `POST /api/cases/{id}/reanalyze` JSON `{expected_version}`; GET `/api/cases/{id}/analyses/{run}/images/{image}/{mask|overlay}` |
+| Solo medico | `/v1/models`, `/v1/submissions` e relativi dettagli/artifacts: inferenza diretta |
+| Solo medico | `GET /api/mobile-submissions?offset=0`, `GET /api/mobile-submissions/{id}` e relativi artifacts: storico degli invii rapidi propri |
+
+Il paziente vede solo i propri casi (altri casi: 404), revisioni e segmentazioni
+pubblicate dal medico, mai `analyses` o punteggi non validati. Paziente su
+`/v1/models`, `/v1/submissions*`, `/api/mobile-submissions*`: 403. Dopo ogni modifica
+usare la nuova `version` restituita; conflitti di `expected_version`: 409.
+
+**Foto dei casi:** JPEG, PNG, WebP, HEIC/HEIF, fino a **40 MiB** per file, almeno
+32 px per lato, massimo **25 megapixel** e quattro foto per caso. EXIF applicato,
+RGB/sRGB, salvataggio PNG senza metadati. `/api/status.max_upload_mb` è in MiB.
+Gli invii rapidi conservano il limite separato di **80 megapixel**. Il percorso
+dei casi usa l’integrazione FTN esistente: accettare nuovi formati non aggiunge la
+scelta clinical/dermoscopic ai casi e non rende una macro dermatoscopica.
+La scelta esplicita modalità/modello resta negli invii rapidi del medico.
+
+Errori `/api`: `{"detail":"messaggio"}` (validazione: anche `errors`);
+errori `/v1`: `{"error":{"code":"...","message":"..."}}`.
+Admin su login mobile: 403
+`{"error":{"code":"forbidden","message":"Gli account amministratore usano l'interfaccia web."}}`.
+
+## Web medico: Analisi rapide
+
+La navigazione del medico affianca “Analisi rapide” a “Casi ricevuti”: storico in
+sola lettura dei propri invii dall’app. Pazienti e amministratori non accedono.
+Lista dal più recente, pagine da 50: `items`, `total`, `offset`, `limit`. Elemento:
+`submission_id`, `case_code`, `mode`, `model_id`, `state`, `received_at`,
+`finished_at`, `failure_code`, `top_label` (`{label,score}` a completamento, altrimenti null).
+
+Dettaglio: stesso schema di `/v1/submissions/{id}`, con result, explanation,
+segmentation e intended_use; URL mappe sotto
+`/api/mobile-submissions/{id}/artifacts/{kind}`. Tipi: `normalized_image`, `heatmap`,
+`heatmap_overlay`, `segmentation_mask`, `segmentation_overlay`. PNG, `no-store`,
+solo proprietario e invii completati. Invio altrui/inesistente o mappa assente: 404.
+Anonimo: 401; paziente e admin: 403. Le consultazioni sono registrate nell’audit.
+
+Il web mostra foto normalizzata, punteggi, Grad-CAM e sovrapposizione, segmentazione
+solo se disponibile (FTN), stato in coda/elaborazione con Aggiorna e failure_code
+spiegato in caso d’errore. Avviso sempre presente:
+“Analisi sperimentale per ricerca: non è una diagnosi clinica validata e non viene
+comunicata al paziente.” Nessun risultato rapido viene pubblicato al paziente.
+
+## Invii rapidi da Flutter (solo medico)
 
 Consultare [API_MOBILE.md](docs/API_MOBILE.md) per esempi, limiti e risposte:
 
@@ -189,7 +252,7 @@ pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorc
 pip install -r model_integration/requirements.txt
 python -m pytest tests
 # Facoltativo: integra i test con i pesi veri installati.
-MODEL_TEST_DIR=model_integration/weights python -m pytest tests/test_real_models.py
+MODEL_TEST_DIR=model_integration/weights python -m pytest -ra tests
 ```
 
 Le dipendenze effettivamente provate in Linux sono registrate in
