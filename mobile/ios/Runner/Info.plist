@@ -32,6 +32,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>La fotocamera serve per scattare le foto dermatologiche da inviare al server del progetto.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Serve per salvare nelle tue foto l’immagine con la mappa condivisa dal medico, solo quando lo scegli tu.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>L’accesso alle foto serve per scegliere un’immagine dermatologica già acquisita da inviare al server del progetto.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import '../domain/acquisition_mode.dart';
 import '../domain/captured_photo.dart';
 import '../domain/patient_case.dart';
 import 'user_session.dart';
@@ -67,8 +68,30 @@ class CasesApi {
   final UserSession _session;
 
   static final _imagePath = RegExp(
-    r'^/api/cases/[a-f0-9-]{36}/(images/[a-f0-9-]{36}|analyses/[a-f0-9-]{36}/images/[a-f0-9-]{36}/(mask|overlay))$',
+    r'^/api/cases/[a-f0-9-]{36}/(images/[a-f0-9-]{36}|analyses/[a-f0-9-]{36}/images/[a-f0-9-]{36}/(mask|overlay|heatmap|heatmap_overlay|heatmap_composite))$',
   );
+
+  /// Contratto e limiti dei casi; un server senza contratto 2 non permette
+  /// di creare casi con la modalità dichiarata.
+  Future<ServerStatus> status() async => ServerStatus.fromJson(
+    await _json('GET', '/api/status') as Map<String, dynamic>,
+  );
+
+  /// Catalogo dei modelli per i casi (solo medico).
+  Future<List<CatalogModel>> models(AcquisitionMode mode) async {
+    final data = await _json(
+      'GET',
+      '/api/models',
+      query: {'mode': mode.apiValue},
+    ) as Map<String, dynamic>;
+    final rows = data['models'];
+    return rows is List
+        ? rows
+              .whereType<Map<String, dynamic>>()
+              .map(CatalogModel.fromJson)
+              .toList()
+        : const [];
+  }
 
   Future<CaseList> list() async => CaseList.fromJson(
     await _json('GET', '/api/cases') as Map<String, dynamic>,
@@ -77,14 +100,34 @@ class CasesApi {
   Future<CaseDetails> details(String id) async =>
       _case(await _json('GET', '/api/cases/$id'));
 
+  /// La modalità è obbligatoria; il modello lo sceglie il server all'invio.
   Future<CaseDetails> create({
+    required AcquisitionMode mode,
     required String bodySite,
     required String notes,
   }) async => _case(
     await _json(
       'POST',
       '/api/cases',
-      body: {'body_site': bodySite, 'notes': notes, 'demo_confirmed': true},
+      body: {
+        'mode': mode.apiValue,
+        'body_site': bodySite,
+        'notes': notes,
+        'demo_confirmed': true,
+      },
+    ),
+  );
+
+  /// Conferma o correzione della modalità da parte del paziente (bozza, o
+  /// modalità storica mancante con nuove foto richieste).
+  Future<CaseDetails> setAcquisition(
+    CaseDetails current,
+    AcquisitionMode mode,
+  ) async => _case(
+    await _json(
+      'PATCH',
+      '/api/cases/${current.id}/acquisition',
+      body: {'expected_version': current.version, 'mode': mode.apiValue},
     ),
   );
 
@@ -128,11 +171,23 @@ class CasesApi {
     ),
   );
 
-  Future<CaseDetails> reanalyze(CaseDetails current) async => _case(
+  /// Nuova analisi asincrona. [explanationTarget] `null` spiega la classe
+  /// predetta di ogni foto; un'etichetta del catalogo la spiega su tutte.
+  Future<CaseDetails> reanalyze(
+    CaseDetails current, {
+    AcquisitionMode? mode,
+    String? modelId,
+    String? explanationTarget,
+  }) async => _case(
     await _json(
       'POST',
       '/api/cases/${current.id}/reanalyze',
-      body: {'expected_version': current.version},
+      body: {
+        'expected_version': current.version,
+        if (mode != null) 'mode': mode.apiValue,
+        'model_id': ?modelId,
+        'explanation_target': ?explanationTarget,
+      },
     ),
   );
 
@@ -142,6 +197,7 @@ class CasesApi {
     required String? finalLabel,
     required String patientMessage,
     required bool shareSegmentation,
+    required bool shareExplanation,
   }) async => _case(
     await _json(
       'POST',
@@ -152,6 +208,7 @@ class CasesApi {
         'final_label': finalLabel,
         'patient_message': patientMessage,
         'share_segmentation': shareSegmentation,
+        'share_explanation': shareExplanation,
       },
     ),
   );
@@ -192,9 +249,14 @@ class CasesApi {
     String method,
     String path, {
     Map<String, Object?>? body,
+    Map<String, String>? query,
   }) {
-    final request = http.Request(method, _session.endpoint(path))
-      ..headers.addAll(_session.headers);
+    // I parametri di query vanno separati: endpoint() codifica il percorso.
+    final uri = _session.endpoint(path);
+    final request = http.Request(
+      method,
+      query == null ? uri : uri.replace(queryParameters: query),
+    )..headers.addAll(_session.headers);
     if (body != null) {
       request
         ..headers['content-type'] = 'application/json'

@@ -7,11 +7,15 @@ import '../api/user_session.dart';
 import '../capture/image_inspector.dart';
 import '../capture/photo_picker.dart';
 import '../capture/photo_preparation.dart';
+import '../domain/acquisition_mode.dart';
 import '../domain/captured_photo.dart';
 import '../domain/patient_case.dart';
 import 'acquisition_controller.dart';
 import 'case_widgets.dart';
+import 'doctor_case_sections.dart';
+import 'image_export.dart';
 import 'messages.dart';
+import 'patient_case_sections.dart';
 import 'widgets.dart';
 
 /// Servizi usati dalle schermate dei casi.
@@ -22,6 +26,7 @@ class CaseServices {
     required this.picker,
     required this.inspector,
     required this.maxUploadBytes,
+    this.shareImage = shareImageWithSystem,
   });
 
   final UserSession session;
@@ -29,6 +34,9 @@ class CaseServices {
   final PhotoPicker picker;
   final ImageInspector inspector;
   final int maxUploadBytes;
+
+  /// Consegna al sistema la foto composta scaricata con il token.
+  final ImageSharer shareImage;
 
   bool get isDoctor => session.role == UserRole.doctor;
 }
@@ -39,6 +47,7 @@ class CaseDetailPage extends StatefulWidget {
     required this.services,
     required this.caseId,
     this.initial,
+    this.pollInterval = const Duration(seconds: 3),
   });
 
   final CaseServices services;
@@ -47,15 +56,26 @@ class CaseDetailPage extends StatefulWidget {
   /// Dettagli già disponibili, per esempio subito dopo la creazione.
   final CaseDetails? initial;
 
+  /// Intervallo di aggiornamento mentre un'analisi è in corso.
+  final Duration pollInterval;
+
   @override
   State<CaseDetailPage> createState() => _CaseDetailPageState();
 }
 
 class _CaseDetailPageState extends State<CaseDetailPage> {
+  static const _maxPolls = 100;
+
   late CaseDetails? _case = widget.initial;
   bool _busy = false;
   String? _loadError;
   PhotoNotice? _photoNotice;
+  Timer? _poll;
+  int _polls = 0;
+
+  /// Solo medico: bozza della valutazione e cataloghi per modalità.
+  final _draft = ReviewDraft();
+  final _catalogs = <AcquisitionMode, List<CatalogModel>>{};
 
   CaseServices get _services => widget.services;
   CasesApi get _api => _services.api;
@@ -64,20 +84,74 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
   @override
   void initState() {
     super.initState();
-    if (_case == null) unawaited(_reload());
+    final initial = _case;
+    if (initial == null) {
+      unawaited(_reload());
+    } else {
+      _afterLoad(initial);
+    }
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _draft.dispose();
+    super.dispose();
   }
 
   Future<void> _reload() async {
     try {
-      final data = await _api.details(widget.caseId);
-      if (mounted) setState(() => (_case = data, _loadError = null));
+      _apply(await _api.details(widget.caseId));
     } on CasesFailure catch (e) {
       if (mounted) setState(() => _loadError = e.message);
     }
   }
 
+  void _apply(CaseDetails data) {
+    if (!mounted) return;
+    setState(() => (_case = data, _loadError = null));
+    _afterLoad(data);
+  }
+
+  void _afterLoad(CaseDetails data) {
+    _schedulePoll(data);
+    if (_doctor) {
+      final mode = data.latestAnalysis?.mode ?? data.mode;
+      if (mode != null) unawaited(_loadCatalog(mode));
+    }
+  }
+
+  /// Mentre l'analisi è in corso il dettaglio si ricarica da solo; la bozza
+  /// della valutazione resta nei campi.
+  void _schedulePoll(CaseDetails data) {
+    _poll?.cancel();
+    final running =
+        data.state.isAnalyzing || (data.latestAnalysis?.isRunning ?? false);
+    if (!running) {
+      _polls = 0;
+      return;
+    }
+    if (_polls++ >= _maxPolls) return;
+    _poll = Timer(widget.pollInterval, () {
+      if (mounted) unawaited(_reload());
+    });
+  }
+
+  /// Il catalogo serve solo al medico: il paziente non chiama mai
+  /// `/api/models`.
+  Future<void> _loadCatalog(AcquisitionMode mode) async {
+    if (!_doctor || _catalogs.containsKey(mode)) return;
+    try {
+      final models = await _api.models(mode);
+      if (mounted) setState(() => _catalogs[mode] = models);
+    } on CasesFailure catch (e) {
+      if (mounted) showCasesError(context, e);
+    }
+  }
+
   /// Esegue un'operazione che restituisce il caso aggiornato. Se il caso è
-  /// cambiato nel frattempo, lo ricarica e mostra il messaggio del server.
+  /// cambiato nel frattempo (409), lo ricarica e mostra il messaggio del
+  /// server senza ritentare.
   Future<bool> _run(
     Future<CaseDetails> Function() action, {
     String? done,
@@ -87,7 +161,7 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     try {
       final data = await action();
       if (!mounted) return true;
-      setState(() => _case = data);
+      _apply(data);
       if (done != null) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(done)));
@@ -96,7 +170,9 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     } catch (e) {
       if (!mounted) return false;
       showCasesError(context, e);
-      if (e is CasesFailure && e.isConflict) await _reload();
+      if (e is CasesFailure && (e.isConflict || e.statusCode == 404)) {
+        await _reload();
+      }
       return false;
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -169,6 +245,80 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     }
   }
 
+  Future<void> _setMode(AcquisitionMode mode) async {
+    final current = _case;
+    if (current == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Modalità: ${caseModeLabel(mode)}'),
+        content: Text(
+          '${caseModeDescription(mode)}\n\n'
+          'Confermi che tutte le foto di questo caso sono acquisite così?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annulla'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Conferma'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _run(
+        () => _api.setAcquisition(current, mode),
+        done: 'Modalità di acquisizione salvata.',
+      );
+    }
+  }
+
+  Future<void> _reanalyze(
+    AcquisitionMode? mode,
+    String? modelId,
+    String? explanationTarget,
+  ) async {
+    final current = _case;
+    if (current == null) return;
+    await _run(
+      () => _api.reanalyze(
+        current,
+        mode: mode,
+        modelId: modelId,
+        explanationTarget: explanationTarget,
+      ),
+      done: 'Nuova analisi richiesta: la pagina si aggiorna da sola.',
+    );
+  }
+
+  /// Ricalcolo delle mappe per la classe corretta: stesso modello e stessa
+  /// modalità, la classificazione non cambia.
+  Future<void> _recompute(String label) async {
+    final analysis = _case?.latestAnalysis;
+    await _reanalyze(null, analysis?.modelId, label);
+  }
+
+  Future<void> _download(PublishedExplanation explanation) async {
+    final data = _case;
+    if (data == null) return;
+    try {
+      final bytes = await _api.image(explanation.compositeUrl);
+      final index = data.images.indexWhere((i) => i.id == explanation.imageId);
+      await _services.shareImage(
+        bytes,
+        'gradcam-${data.code}-foto-${index + 1}.png',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showCasesError(context, e);
+      // Mappa revocata: si ricarica il caso, senza riusare l'URL.
+      if (e is CasesFailure && e.statusCode == 404) await _reload();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _case;
@@ -211,6 +361,20 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
                     if (_busy) const LinearProgressIndicator(),
                     _Header(data: data),
                     ..._stateNotice(data),
+                    if (_doctor && data.mode == null)
+                      const NoticeCard(
+                        icon: Icons.history,
+                        title: 'Caso senza modalità di acquisizione',
+                        message:
+                            'Caso storico: conferma clinical o dermoscopic in «Nuova analisi» '
+                            'e attendi il risultato prima di pubblicare una valutazione.',
+                      ),
+                    if (!_doctor)
+                      PatientModeSection(
+                        data: data,
+                        busy: _busy,
+                        onSelect: _setMode,
+                      ),
                     SectionTitle(
                       'Foto (${data.images.length} di $maxCaseImages)',
                     ),
@@ -224,41 +388,58 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
                     if (!_doctor && data.state.acceptsPatientPhotos)
                       ..._patientActions(data),
                     if (!_doctor && data.state == CaseState.released)
-                      _PatientReport(api: _api, data: data),
+                      PatientResponse(
+                        api: _api,
+                        data: data,
+                        onDownload: _download,
+                      ),
                     if (_doctor) ...[
-                      _AnalysisSection(api: _api, data: data),
+                      AnalysisSection(
+                        api: _api,
+                        data: data,
+                        catalog: _catalogFor(data.latestAnalysis?.mode),
+                      ),
                       if (data.state.canReanalyze)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: OutlinedButton.icon(
-                            onPressed: _busy
-                                ? null
-                                : () => _run(
-                                    () => _api.reanalyze(data),
-                                    done: 'Nuova analisi richiesta.',
-                                  ),
-                            icon: const Icon(Icons.replay),
-                            label: const Text('Ripeti l’analisi'),
-                          ),
-                        ),
-                      if (_ReviewForm.applies(data))
-                        _ReviewForm(
-                          key: ValueKey('review-${data.version}'),
+                        ReanalyzePanel(
+                          key: ValueKey('reanalyze-${data.version}'),
                           data: data,
+                          catalogFor: (mode) => _catalogs[mode],
+                          onNeedCatalog: (mode) =>
+                              unawaited(_loadCatalog(mode)),
                           busy: _busy,
-                          onSubmit: (decision, label, message, share) => _run(
-                            () => _api.review(
-                              data,
-                              decision: decision,
-                              finalLabel: label,
-                              patientMessage: message,
-                              shareSegmentation: share,
-                            ),
-                            done: decision == ReviewDecision.needsImages
-                                ? 'Richiesta inviata al paziente.'
-                                : 'Valutazione pubblicata.',
-                          ),
+                          onSubmit: _reanalyze,
                         ),
+                      ReviewSection(
+                        data: data,
+                        draft: _draft,
+                        busy: _busy,
+                        catalog: _catalogFor(data.latestAnalysis?.mode),
+                        onRecompute: _recompute,
+                        onSubmit:
+                            (
+                              decision,
+                              label,
+                              message,
+                              segmentation,
+                              explanation,
+                            ) async {
+                              final done = await _run(
+                                () => _api.review(
+                                  data,
+                                  decision: decision,
+                                  finalLabel: label,
+                                  patientMessage: message,
+                                  shareSegmentation: segmentation,
+                                  shareExplanation: explanation,
+                                ),
+                                done: decision == ReviewDecision.needsImages
+                                    ? 'Richiesta inviata al paziente.'
+                                    : 'Valutazione pubblicata.',
+                              );
+                              if (done) _draft.reset();
+                              return done;
+                            },
+                      ),
                     ],
                     if (data.reviews.isNotEmpty) ...[
                       const SectionTitle('Comunicazioni del medico'),
@@ -271,6 +452,9 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
       ),
     );
   }
+
+  List<CatalogModel>? _catalogFor(AcquisitionMode? mode) =>
+      mode == null ? null : _catalogs[mode];
 
   List<Widget> _patientActions(CaseDetails data) {
     final full = data.images.length >= maxCaseImages;
@@ -319,7 +503,10 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
       ),
       const SizedBox(height: 12),
       FilledButton.icon(
-        onPressed: data.images.isEmpty || _busy ? null : _submit,
+        // Senza modalità il server non può scegliere il percorso di analisi.
+        onPressed: data.images.isEmpty || data.mode == null || _busy
+            ? null
+            : _submit,
         icon: const Icon(Icons.send),
         label: Text(
           data.state == CaseState.needsImages
@@ -418,6 +605,7 @@ class _Header extends StatelessWidget {
           CaseStateChip(data.state),
           const SizedBox(height: 8),
           if (data.patientCode != null) Text('Paziente: ${data.patientCode}'),
+          Text('Modalità: ${caseModeLabel(data.mode)}'),
           if (data.bodySite.isNotEmpty) Text('Sede: ${data.bodySite}'),
           if (data.createdAt != null)
             Text('Creato il ${formatShortDate(data.createdAt)}', style: muted),
@@ -475,395 +663,6 @@ class _Photos extends StatelessWidget {
   }
 }
 
-class _PatientReport extends StatelessWidget {
-  const _PatientReport({required this.api, required this.data});
-
-  final CasesApi api;
-  final CaseDetails data;
-
-  @override
-  Widget build(BuildContext context) {
-    final review = data.reviews.lastWhere(
-      (r) => r.decision != ReviewDecision.needsImages,
-      orElse: () => data.latestReview!,
-    );
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(top: 16),
-      color: theme.colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.verified_user_outlined),
-                SizedBox(width: 8),
-                Text('Validato dal medico'),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Classificazione comunicata',
-              style: theme.textTheme.labelMedium,
-            ),
-            Text(review.finalLabel ?? '', style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            Text(review.patientMessage),
-            for (final segment in data.publishedSegmentations)
-              if (data.images.where((i) => i.id == segment.imageId).firstOrNull
-                  case final image?)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: CaseImageView(
-                    api: api,
-                    path: image.url,
-                    overlayPath: segment.overlayUrl,
-                    aspectRatio: image.height == 0
-                        ? 1
-                        : image.width / image.height,
-                    fit: BoxFit.fill,
-                  ),
-                ),
-            if (data.publishedSegmentations.isNotEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'L’area evidenziata è la segmentazione condivisa dal medico.',
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Risultato del modello: solo per il medico (il server non lo invia al
-/// paziente).
-class _AnalysisSection extends StatefulWidget {
-  const _AnalysisSection({required this.api, required this.data});
-
-  final CasesApi api;
-  final CaseDetails data;
-
-  @override
-  State<_AnalysisSection> createState() => _AnalysisSectionState();
-}
-
-class _AnalysisSectionState extends State<_AnalysisSection> {
-  bool _showSegmentation = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final analysis = widget.data.latestAnalysis;
-    final children = <Widget>[
-      const SectionTitle('Analisi del modello'),
-      const Text(
-        'Risultato sperimentale riservato al medico: non è una diagnosi clinica validata.',
-      ),
-      const SizedBox(height: 8),
-    ];
-    if (analysis == null) {
-      children.add(const Text('Nessuna analisi disponibile.'));
-    } else if (!analysis.completed) {
-      children.add(
-        Text(switch (analysis.state) {
-          'queued' => 'Analisi in coda.',
-          'running' => 'Analisi in corso.',
-          'waiting_model' => 'In attesa del modello.',
-          'failed' =>
-            'Analisi non riuscita${analysis.failureCode == null ? '' : ' (${analysis.failureCode})'}.',
-          _ => 'Stato dell’analisi: ${analysis.state}.',
-        }),
-      );
-    } else {
-      final hasMasks = analysis.images.any((i) => i.overlayUrl != null);
-      if (hasMasks) {
-        children.add(
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Mostra la segmentazione'),
-            value: _showSegmentation,
-            onChanged: (value) => setState(() => _showSegmentation = value),
-          ),
-        );
-      }
-      for (final result in analysis.images) {
-        final image = widget.data.images
-            .where((i) => i.id == result.imageId)
-            .firstOrNull;
-        children.add(
-          Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (image != null)
-                    CaseImageView(
-                      key: ValueKey('${image.id}-$_showSegmentation'),
-                      api: widget.api,
-                      path: image.url,
-                      overlayPath: _showSegmentation ? result.overlayUrl : null,
-                      aspectRatio: image.height == 0
-                          ? 1
-                          : image.width / image.height,
-                      fit: BoxFit.fill,
-                    ),
-                  const SizedBox(height: 8),
-                  if (result.modelName.isNotEmpty)
-                    Text('Modello: ${result.modelName}'),
-                  for (final row in result.labels.take(3))
-                    Text(
-                      '${row.label}: ${(row.score * 100).toStringAsFixed(1)}%',
-                    ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
-    );
-  }
-}
-
-typedef ReviewSubmit = Future<bool> Function(
-  ReviewDecision decision,
-  String? finalLabel,
-  String message,
-  bool shareSegmentation,
-);
-
-/// Valutazione del medico, con le stesse regole del web.
-class _ReviewForm extends StatefulWidget {
-  const _ReviewForm({
-    super.key,
-    required this.data,
-    required this.busy,
-    required this.onSubmit,
-  });
-
-  final CaseDetails data;
-  final bool busy;
-  final ReviewSubmit onSubmit;
-
-  static bool canValidate(CaseDetails data) =>
-      data.state == CaseState.awaitingReview &&
-      (data.latestAnalysis?.completed ?? false);
-
-  static bool canRequestImages(CaseDetails data) =>
-      data.images.length < maxCaseImages && data.state.canReanalyze;
-
-  static bool applies(CaseDetails data) =>
-      canValidate(data) || canRequestImages(data);
-
-  @override
-  State<_ReviewForm> createState() => _ReviewFormState();
-}
-
-class _ReviewFormState extends State<_ReviewForm> {
-  static const _minMessage = 10;
-
-  late final bool _canValidate = _ReviewForm.canValidate(widget.data);
-  late final List<String> _suggested = {
-    for (final image
-        in widget.data.latestAnalysis?.images ?? const <AnalysisImage>[])
-      ?image.topLabel,
-  }.toList();
-  late ReviewDecision _decision = _canValidate
-      ? ReviewDecision.approved
-      : ReviewDecision.needsImages;
-  late final _label = TextEditingController(text: _suggested.firstOrNull ?? '');
-  final _message = TextEditingController();
-  bool _share = false;
-
-  bool get _requestsImages => _decision == ReviewDecision.needsImages;
-  bool get _hasMasks =>
-      widget.data.latestAnalysis?.images.any((i) => i.overlayUrl != null) ??
-      false;
-
-  @override
-  void dispose() {
-    _label.dispose();
-    _message.dispose();
-    super.dispose();
-  }
-
-  void _onLabelChanged(String value) {
-    // Come sul web: un'etichetta diversa dalla predizione è una correzione.
-    if (_decision == ReviewDecision.approved &&
-        !_suggested.contains(value.trim())) {
-      setState(() => _decision = ReviewDecision.corrected);
-    } else {
-      setState(() {});
-    }
-  }
-
-  bool get _valid =>
-      _message.text.trim().length >= _minMessage &&
-      (_requestsImages || _label.text.trim().isNotEmpty);
-
-  Future<void> _confirm() async {
-    final label = _requestsImages ? null : _label.text.trim();
-    final message = _message.text.trim();
-    final share = !_requestsImages && _share;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          _requestsImages
-              ? 'Invia la richiesta di nuove foto'
-              : 'Pubblica la valutazione',
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Controlla il contenuto che sarà comunicato al paziente.',
-              ),
-              if (label != null) ...[
-                const SizedBox(height: 12),
-                Text(label, style: Theme.of(context).textTheme.titleLarge),
-              ],
-              const SizedBox(height: 12),
-              Text(message),
-              if (share)
-                const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: Text('Sarà condivisa anche la segmentazione.'),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Torna alla modifica'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              _requestsImages ? 'Invia richiesta' : 'Pubblica per il paziente',
-            ),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await widget.onSubmit(_decision, label, message, share);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final decisions = [
-      if (_canValidate) ...[
-        (ReviewDecision.approved, 'Conferma classificazione'),
-        (ReviewDecision.corrected, 'Correggi classificazione'),
-      ],
-      if (_ReviewForm.canRequestImages(widget.data))
-        (ReviewDecision.needsImages, 'Richiedi nuove foto'),
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SectionTitle('La tua valutazione'),
-        RadioGroup<ReviewDecision>(
-          groupValue: _decision,
-          onChanged: (value) {
-            if (value != null && !widget.busy) {
-              setState(() => _decision = value);
-            }
-          },
-          child: Column(
-            children: [
-              for (final (value, label) in decisions)
-                RadioListTile<ReviewDecision>(
-                  contentPadding: EdgeInsets.zero,
-                  value: value,
-                  title: Text(label),
-                ),
-            ],
-          ),
-        ),
-        if (!_requestsImages) ...[
-          const SizedBox(height: 8),
-          TextField(
-            key: const ValueKey('final-label'),
-            controller: _label,
-            enabled: !widget.busy,
-            maxLength: 160,
-            onChanged: _onLabelChanged,
-            decoration: const InputDecoration(
-              labelText: 'Classificazione da comunicare',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          if (_suggested.length > 1)
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final label in _suggested)
-                  ActionChip(
-                    label: Text(label),
-                    onPressed: () {
-                      _label.text = label;
-                      _onLabelChanged(label);
-                    },
-                  ),
-              ],
-            ),
-        ],
-        const SizedBox(height: 8),
-        TextField(
-          key: const ValueKey('patient-message'),
-          controller: _message,
-          enabled: !widget.busy,
-          minLines: 3,
-          maxLines: 8,
-          maxLength: 5000,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            labelText: _requestsImages
-                ? 'Quali foto servono e perché'
-                : 'Messaggio per il paziente',
-            helperText:
-                'Almeno $_minMessage caratteri. Sarà letto dal paziente.',
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        if (!_requestsImages && _hasMasks)
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Condividi la segmentazione con il paziente'),
-            value: _share,
-            onChanged: widget.busy
-                ? null
-                : (value) => setState(() => _share = value),
-          ),
-        const SizedBox(height: 8),
-        FilledButton(
-          onPressed: _valid && !widget.busy ? _confirm : null,
-          child: Text(
-            _requestsImages
-                ? 'Invia la richiesta al paziente'
-                : 'Pubblica la valutazione',
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _ReviewCard extends StatelessWidget {
   const _ReviewCard(this.review);
 
@@ -887,6 +686,16 @@ class _ReviewCard extends StatelessWidget {
               Text('Classificazione: $label'),
             const SizedBox(height: 4),
             Text(review.patientMessage),
+            if (review.shareExplanation || review.shareSegmentation)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  [
+                    if (review.shareExplanation) 'Grad-CAM condivisa',
+                    if (review.shareSegmentation) 'segmentazione condivisa',
+                  ].join(' · '),
+                ),
+              ),
             const SizedBox(height: 4),
             Text(
               [

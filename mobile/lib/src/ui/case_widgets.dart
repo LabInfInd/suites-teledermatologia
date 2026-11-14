@@ -3,8 +3,23 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../api/cases_api.dart';
+import '../domain/acquisition_mode.dart';
 import '../domain/patient_case.dart';
 import 'photo_viewer_page.dart';
+
+String caseModeLabel(AcquisitionMode? mode) => switch (mode) {
+  AcquisitionMode.clinical => 'Foto clinica',
+  AcquisitionMode.dermoscopic => 'Dermatoscopica',
+  null => 'Modalità non indicata',
+};
+
+/// Come scegliere la modalità: dipende dallo strumento, non dalla foto.
+String caseModeDescription(AcquisitionMode mode) => switch (mode) {
+  AcquisitionMode.clinical =>
+    'Smartphone normale, anche con foto ravvicinate o in modalità macro.',
+  AcquisitionMode.dermoscopic =>
+    'Dermatoscopio, oppure smartphone con adattatore dermatoscopico.',
+};
 
 String formatShortDate(DateTime? value) {
   if (value == null) return '';
@@ -59,6 +74,7 @@ class CaseListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final details = [
       if (item.patientCode != null) 'Paziente ${item.patientCode}',
+      caseModeLabel(item.mode),
       if (item.bodySite.isNotEmpty) item.bodySite,
       '${item.imageCount} ${item.imageCount == 1 ? 'foto' : 'foto'}',
       if (item.updatedAt != null)
@@ -86,8 +102,10 @@ class CaseListTile extends StatelessWidget {
   }
 }
 
-/// Immagine del server scaricata con il token della sessione, con eventuale
-/// sovrapposizione (segmentazione). Toccandola si apre a schermo intero.
+/// Immagine del server scaricata con il token della sessione, con al più
+/// una sovrapposizione trasparente (segmentazione o overlay Grad-CAM).
+/// Le foto già composte (`heatmap_composite`) si passano senza overlay.
+/// Toccandola si apre a schermo intero.
 class CaseImageView extends StatefulWidget {
   const CaseImageView({
     super.key,
@@ -96,6 +114,7 @@ class CaseImageView extends StatefulWidget {
     this.overlayPath,
     this.aspectRatio = 1,
     this.fit = BoxFit.cover,
+    this.unavailableText = 'Immagine non più disponibile.',
   });
 
   final CasesApi api;
@@ -103,6 +122,9 @@ class CaseImageView extends StatefulWidget {
   final String? overlayPath;
   final double aspectRatio;
   final BoxFit fit;
+
+  /// Mostrato se il server risponde 404, per esempio una mappa revocata.
+  final String unavailableText;
 
   @override
   State<CaseImageView> createState() => _CaseImageViewState();
@@ -138,6 +160,23 @@ class _CaseImageViewState extends State<CaseImageView> {
           future: _bytes,
           builder: (context, snapshot) {
             final scheme = Theme.of(context).colorScheme;
+            final error = snapshot.error;
+            if (error is CasesFailure && error.statusCode == 404) {
+              // Revocata o non più presente: non si riprova con lo stesso URL.
+              return ColoredBox(
+                key: const ValueKey('case-image-unavailable'),
+                color: scheme.surfaceContainerHighest,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      widget.unavailableText,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              );
+            }
             if (snapshot.hasError) {
               return ColoredBox(
                 color: scheme.surfaceContainerHighest,

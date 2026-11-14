@@ -85,11 +85,21 @@ void main() {
     expect(enabled(tester, 'Crea il caso e aggiungi le foto'), isFalse);
     await tester.tap(find.byKey(const ValueKey('demo-confirmed')));
     await tester.pump();
+    // Senza modalità di acquisizione il caso non si crea.
+    expect(enabled(tester, 'Crea il caso e aggiungi le foto'), isFalse);
+    expect(
+      find.text('Scegli la modalità di acquisizione per continuare.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('mode-clinical')));
+    await tester.pump();
     await tester.tap(find.text('Crea il caso e aggiungi le foto'));
     await tester.pumpAndSettle();
 
     expect(find.text('Il caso è in preparazione.'), findsOneWidget);
     expect(find.text('Sede: Avambraccio sinistro'), findsOneWidget);
+    expect(find.text('Modalità: Foto clinica'), findsOneWidget);
+    expect(server.cases.values.single['mode'], 'clinical');
     expect(enabled(tester, 'Invia il caso al medico'), isFalse);
 
     picker.enqueue(pickedPng());
@@ -198,6 +208,8 @@ void main() {
     final review = (data['reviews'] as List).single as Map<String, dynamic>;
     expect(review['decision'], 'approved');
     expect(review['final_label'], 'NEV');
+    // Il consenso Grad-CAM non è mai implicito.
+    expect(review['share_explanation'], isFalse);
     expect(data['state'], 'released');
     expect(find.text('Valutazione pubblicata.'), findsWidgets);
 
@@ -230,6 +242,12 @@ void main() {
         'Lesione benigna, nessun trattamento.',
       );
       await tester.pump();
+      // Diagnosi fuori catalogo: pubblicazione solo testuale.
+      expect(
+        find.textContaining('non è una classe del modello'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('recompute-gradcam')), findsNothing);
       await tester.tap(
         find.widgetWithText(FilledButton, 'Pubblica la valutazione'),
       );
@@ -239,6 +257,7 @@ void main() {
       final review = (data['reviews'] as List).single as Map<String, dynamic>;
       expect(review['decision'], 'corrected');
       expect(review['final_label'], 'Cheratosi seborroica');
+      expect(review['share_explanation'], isFalse);
     },
   );
 }

@@ -18,6 +18,7 @@ import 'ui/acquisition_page.dart';
 import 'ui/case_detail_page.dart';
 import 'ui/case_list_page.dart';
 import 'ui/doctor_home_page.dart';
+import 'ui/image_export.dart';
 import 'ui/brand.dart';
 
 /// Servizi usati dall'interfaccia, sostituibili nei test.
@@ -29,6 +30,7 @@ class AppDependencies {
     required this.api,
     this.session,
     this.cases,
+    this.shareImage = shareImageWithSystem,
   });
 
   factory AppDependencies.production(AppConfig config) {
@@ -72,6 +74,9 @@ class AppDependencies {
 
   /// Casi del paziente e revisione del medico; presente con un server reale.
   final CasesApi? cases;
+
+  /// Salvataggio delle mappe pubblicate, sostituibile nei test.
+  final ImageSharer shareImage;
 }
 
 class SuitesApp extends StatefulWidget {
@@ -142,6 +147,7 @@ class _SuitesAppState extends State<SuitesApp> {
           picker: dependencies.picker,
           inspector: dependencies.inspector,
           maxUploadBytes: dependencies.config.maxUploadBytes,
+          shareImage: dependencies.shareImage,
         );
         return switch (session.role) {
           UserRole.doctor => DoctorHomePage(
