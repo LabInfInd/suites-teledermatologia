@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../api/simulated_server.dart';
-import '../api/operator_session.dart';
+import '../api/cases_api.dart';
+import '../api/user_session.dart';
+import 'quick_history_page.dart';
 import 'submission_result_page.dart';
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
@@ -12,6 +14,7 @@ import 'acquisition_controller.dart';
 import 'brand.dart';
 import 'messages.dart';
 import 'photo_viewer_page.dart';
+import 'widgets.dart';
 
 /// Schermata unica del flusso: tipo di acquisizione, foto, codice caso, invio.
 class AcquisitionPage extends StatefulWidget {
@@ -20,11 +23,15 @@ class AcquisitionPage extends StatefulWidget {
     required this.controller,
     required this.connection,
     this.session,
+    this.cases,
   });
 
   final AcquisitionController controller;
   final ServerConnection connection;
-  final OperatorSession? session;
+  final UserSession? session;
+
+  /// Per lo storico delle analisi rapide; `null` senza server reale.
+  final CasesApi? cases;
 
   @override
   State<AcquisitionPage> createState() => _AcquisitionPageState();
@@ -75,32 +82,21 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
           },
           child: Scaffold(
             appBar: AppBar(
-              title: Row(
-                children: [
-                  const BrandSymbol(size: 36),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(Brand.name, overflow: TextOverflow.ellipsis),
-                        Text(
-                          Brand.caseStudy,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+              title: const BrandAppBarTitle(),
+              actions: [
+                if (widget.session != null && widget.cases != null)
+                  IconButton(
+                    tooltip: 'Analisi rapide inviate',
+                    icon: const Icon(Icons.history),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => QuickHistoryPage(
+                          session: widget.session!,
+                          api: widget.cases!,
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ],
-              ),
-              actions: [
                 if (widget.session != null)
                   IconButton(
                     tooltip: 'Esci',
@@ -124,7 +120,7 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                 children: [
                   ..._connectionNotice(),
-                  const _SectionTitle('1. Tipo di acquisizione'),
+                  const SectionTitle('1. Tipo di acquisizione'),
                   for (final mode in AcquisitionMode.values)
                     _ModeOption(
                       mode: mode,
@@ -166,9 +162,9 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                       isExpanded: true,
                     ),
                   ],
-                  const _SectionTitle('2. Foto'),
+                  const SectionTitle('2. Foto'),
                   _PhotoSection(controller: c, onOpenViewer: _openViewer),
-                  const _SectionTitle('3. Codice caso'),
+                  const SectionTitle('3. Codice caso'),
                   TextField(
                     key: const ValueKey('case-code'),
                     controller: _caseCode,
@@ -191,7 +187,7 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                       border: const OutlineInputBorder(),
                     ),
                   ),
-                  const _SectionTitle('4. Invio'),
+                  const SectionTitle('4. Invio'),
                   _SubmitSection(
                     controller: c,
                     onNewPhoto: c.startNewPhotoForSameCase,
@@ -226,7 +222,7 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
   List<Widget> _connectionNotice() => switch (widget.connection) {
     SimulatedServer(:final scenario) => [_SimulatedServerBanner(scenario)],
     ServerNotConfigured(:final issue) => [
-      _NoticeCard(
+      NoticeCard(
         icon: Icons.cloud_off_outlined,
         title: 'Server non configurato',
         message:
@@ -236,29 +232,6 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
     ],
     RemoteServer() => const [],
   };
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 20, bottom: 8),
-      child: Semantics(
-        header: true,
-        child: Text(
-          text,
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: theme.colorScheme.primary,
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _SimulatedServerBanner extends StatelessWidget {
@@ -298,58 +271,6 @@ class _SimulatedServerBanner extends StatelessWidget {
                   ),
                   if (scenario != SimulatedScenario.success)
                     Text('Scenario di prova: ${scenario.configValue}'),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NoticeCard extends StatelessWidget {
-  const _NoticeCard({
-    required this.icon,
-    required this.title,
-    required this.message,
-    this.isError = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final foreground = isError
-        ? scheme.onErrorContainer
-        : scheme.onSecondaryContainer;
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      color: isError ? scheme.errorContainer : scheme.secondaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: foreground),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: foreground,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(message, style: TextStyle(color: foreground)),
                 ],
               ),
             ),

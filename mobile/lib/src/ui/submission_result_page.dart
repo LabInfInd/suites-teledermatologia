@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-import '../api/operator_session.dart';
+import '../api/user_session.dart';
 
 class SubmissionResultPage extends StatefulWidget {
   const SubmissionResultPage({
@@ -11,7 +11,7 @@ class SubmissionResultPage extends StatefulWidget {
     required this.session,
     required this.submissionId,
   });
-  final OperatorSession session;
+  final UserSession session;
   final String submissionId;
   @override
   State<SubmissionResultPage> createState() => _SubmissionResultPageState();
@@ -64,7 +64,7 @@ class _SubmissionResultPageState extends State<SubmissionResultPage> {
       if (['queued', 'running'].contains(status['state']) && ++_polls < 30) {
         _timer = Timer(const Duration(seconds: 2), () => unawaited(_refresh()));
       }
-    } on OperatorFailure catch (e) {
+    } on SessionFailure catch (e) {
       if (mounted) setState(() => _error = e.message);
     } catch (_) {
       if (mounted) {

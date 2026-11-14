@@ -5,8 +5,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 
 import 'api/http_submission_api.dart';
-import 'api/operator_session.dart';
-import 'ui/operator_login_page.dart';
+import 'api/cases_api.dart';
+import 'api/user_session.dart';
+import 'ui/login_page.dart';
 import 'api/simulated_server.dart';
 import 'api/submission_api.dart';
 import 'capture/image_inspector.dart';
@@ -14,6 +15,9 @@ import 'capture/photo_picker.dart';
 import 'config/app_config.dart';
 import 'ui/acquisition_controller.dart';
 import 'ui/acquisition_page.dart';
+import 'ui/case_detail_page.dart';
+import 'ui/case_list_page.dart';
+import 'ui/doctor_home_page.dart';
 import 'ui/brand.dart';
 
 /// Servizi usati dall'interfaccia, sostituibili nei test.
@@ -24,12 +28,13 @@ class AppDependencies {
     required this.inspector,
     required this.api,
     this.session,
+    this.cases,
   });
 
   factory AppDependencies.production(AppConfig config) {
     final connection = config.connection;
     final session = connection is RemoteServer
-        ? OperatorSession(baseUrl: connection.baseUrl, client: http.Client())
+        ? UserSession(baseUrl: connection.baseUrl, client: http.Client())
         : null;
     final api = switch (config.connection) {
       RemoteServer(:final baseUrl) => HttpSubmissionApi(
@@ -55,6 +60,7 @@ class AppDependencies {
       inspector: const EngineImageInspector(),
       api: api,
       session: session,
+      cases: session == null ? null : CasesApi(session),
     );
   }
 
@@ -62,7 +68,10 @@ class AppDependencies {
   final PhotoPicker picker;
   final ImageInspector inspector;
   final SubmissionApi? api;
-  final OperatorSession? session;
+  final UserSession? session;
+
+  /// Casi del paziente e revisione del medico; presente con un server reale.
+  final CasesApi? cases;
 }
 
 class SuitesApp extends StatefulWidget {
@@ -110,22 +119,39 @@ class _SuitesAppState extends State<SuitesApp> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: ThemeData(colorScheme: scheme(Brightness.light)),
       darkTheme: ThemeData(colorScheme: scheme(Brightness.dark)),
-      home: widget.dependencies.session != null
-          ? ListenableBuilder(
-              listenable: widget.dependencies.session!,
-              builder: (context, _) =>
-                  widget.dependencies.session!.authenticated
-                  ? AcquisitionPage(
-                      controller: _controller,
-                      connection: widget.dependencies.config.connection,
-                      session: widget.dependencies.session,
-                    )
-                  : OperatorLoginPage(session: widget.dependencies.session!),
-            )
-          : AcquisitionPage(
-              controller: _controller,
-              connection: widget.dependencies.config.connection,
-            ),
+      home: _home(),
+    );
+  }
+
+  Widget _home() {
+    final dependencies = widget.dependencies;
+    final session = dependencies.session;
+    if (session == null) {
+      return AcquisitionPage(
+        controller: _controller,
+        connection: dependencies.config.connection,
+      );
+    }
+    return ListenableBuilder(
+      listenable: session,
+      builder: (context, _) {
+        if (!session.authenticated) return LoginPage(session: session);
+        final services = CaseServices(
+          session: session,
+          api: dependencies.cases ?? CasesApi(session),
+          picker: dependencies.picker,
+          inspector: dependencies.inspector,
+          maxUploadBytes: dependencies.config.maxUploadBytes,
+        );
+        return switch (session.role) {
+          UserRole.doctor => DoctorHomePage(
+            services: services,
+            controller: _controller,
+            connection: dependencies.config.connection,
+          ),
+          _ => CaseListPage(services: services),
+        };
+      },
     );
   }
 }
