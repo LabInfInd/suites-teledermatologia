@@ -12,7 +12,7 @@ Istanza attiva: **https://sisagen-cardio.poliba.it:11112** (HTTPS con certificat
 |---|---|---|
 | `server/` | Backend FastAPI, worker delle analisi, PostgreSQL, archivio immagini, interfaccia web (`server/app/static/`), modelli e Grad-CAM | [server/README.md](server/README.md) |
 | `mobile/` | App Flutter con i progetti nativi Android e iOS | [mobile/README.md](mobile/README.md) |
-| `docs/` | Contratto API condiviso e indicazioni per l’addestramento del modello clinico | [docs/api-contratto-proposta.md](docs/api-contratto-proposta.md) |
+| `docs/` | Relazione tecnica finale, contratto API condiviso e indicazioni per l’addestramento del modello clinico | [docs/relazione-tecnica.md](docs/relazione-tecnica.md) |
 
 Specifiche di riferimento: [contratto 2 dei casi e Grad-CAM](server/docs/CASE_GRADCAM.md), [API mobile](server/docs/API_MOBILE.md), [verifiche del server](server/docs/VERIFICATION.md).
 
