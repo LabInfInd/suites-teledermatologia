@@ -21,6 +21,12 @@ di pazienti, telefoni e condizioni di acquisizione del progetto.
 | clinical-dinov2-base | clinical, anche macro | 6 classi PAD-UFES-20 | no | Grad-CAM su patch ViT |
 | dermoscopic-ftn | dermoscopic | 7 classi del checkpoint FTN | FTN separato | Grad-CAM delle 5 viste TTA |
 
+Il modello per [ferite e ulcere](docs/WOUNDS.md) è abilitato nel catalogo per uso di
+ricerca. Usa quattro classi AZH, scelta esplicita e Grad-CAM, senza segmentazione.
+I casi paziente accettano `analysis_task=wound_type`; il default clinico esistente
+rimane dedicato alle lesioni PAD. La baseline non è validata per impiego clinico.
+La provenienza e i limiti d'uso dei dati rimangono nelle attribuzioni del bundle.
+
 PAD: **ACK, BCC, MEL, NEV, SCC, SEK**. FTN: **AK, BCC, BKL, DF, MEL, NV, VASC**.
 Nessuna sostituzione fra clinical e dermoscopic o fra SEK e BKL. Il FTN disponibile
 non contiene SCC: per integrare un diverso classificatore ISIC a otto classi servono

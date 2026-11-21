@@ -16,6 +16,21 @@ Istanza attiva: **https://sisagen-cardio.poliba.it:11112** (HTTPS con certificat
 
 Specifiche di riferimento: [contratto 2 dei casi e Grad-CAM](server/docs/CASE_GRADCAM.md), [API mobile](server/docs/API_MOBILE.md), [verifiche del server](server/docs/VERIFICATION.md).
 
+## Ferite e ulcere
+
+Il server di ricerca espone anche `clinical-wounds-azh`, con `mode=clinical` e
+`analysis_task=wound_type` per i casi paziente. Il modello distingue quattro tipi
+noti di ferita e produce Grad-CAM, senza segmentazione. L'integrazione di questo
+nuovo percorso nell'app è descritta nelle specifiche del 20 novembre 2026:
+
+- [Prompt completo per Claude per aggiornare l'app](server/docs/PROMPT_APP_WOUNDS.md).
+- [Specifiche di ferite e ulcere](server/docs/WOUNDS.md).
+- [API mobile aggiornate](server/docs/API_MOBILE.md).
+- [Casi paziente e revisione medica](server/docs/CASE_GRADCAM.md).
+
+I nuovi campi sono retrocompatibili; la scelta del percorso ferite è esplicita.
+La classificazione resta sperimentale per ricerca e richiede valutazione medica.
+
 ## Ruoli e accesso
 
 | Ruolo | Web | App |
@@ -132,6 +147,7 @@ Verificato il 14/11/2026 sul computer di sviluppo:
 | Modalità | Modelli | Classi | Segmentazione |
 |---|---|---|---|
 | `clinical` | ConvNeXt V2 tiny (predefinito), DINOv2 base | ACK, BCC, MEL, NEV, SCC, SEK | No |
+| `clinical`, task ferite | DINOv2 Base (`clinical-wounds-azh`, scelta esplicita) | diabetic, pressure, surgical, venous | No |
 | `dermoscopic` | FTN | AK, BCC, BKL, DF, MEL, NV, VASC | Sì, separata da Grad-CAM |
 
 Nessuna equivalenza tra classi dei due percorsi: SEK non è BKL e NEV non è NV. Nessun modello viene eseguito sul telefono. Dettagli, pesi e manifest sono in [server/README.md](server/README.md).

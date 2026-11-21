@@ -16,6 +16,34 @@ CSRF. Browser: cookie+CSRF e controlli d’origine invariati. Errori `/api`:
 **Cambiamento del contratto:** la creazione di nuovi casi richiede `mode`.
 Richieste senza `mode`: 422, senza inferenza automatica o default dermatoscopico.
 
+## Tipo di analisi per ferite e ulcere
+
+Estensione retrocompatibile: `GET /api/status` mantiene `case_contract_version: 2`
+e aggiunge `analysis_task_contract_version: 1` e
+`analysis_tasks: ["skin_lesion", "wound_type", "dermoscopic_lesion"]`.
+`POST /api/cases`, `PATCH /api/cases/{id}/acquisition` e reanalyze accettano
+`analysis_task` facoltativo. Senza il nuovo campo i nuovi casi conservano il
+percorso precedente: clinical → skin_lesion, dermoscopic → dermoscopic_lesion.
+
+Per un caso di ferita usare `mode=clinical, analysis_task=wound_type`. Il submit
+congela `clinical-wounds-azh`; non viene eseguito un riconoscimento del tipo di foto.
+Il dettaglio e le liste del caso restituiscono `analysis_task`; anche ogni analisi
+medica conserva il task. Il paziente non accede al catalogo medico o ai punteggi.
+Combinazioni incompatibili in creazione/acquisition: 422. In reanalyze: 400.
+Il campo è ammesso solo per i casi; `/v1/submissions` conserva i campi multipart
+esistenti e identifica il task dal `model_id` esplicito.
+
+La patch con stessa modalità e senza task conserva la scelta già effettuata. In
+bozza il task può essere cambiato esplicitamente; dopo l'invio lo cambia solo il
+medico tramite reanalyze. Il modello esplicito del medico determina il task se
+questo è omesso; se forniti entrambi devono corrispondere. Cambiando solo task il
+server sceglie il modello previsto per il task e non conserva un modello incompatibile.
+Le mappe pubblicate devono corrispondere anche al tipo di analisi corrente.
+Migrazione additiva `20261120_wound_task`: valorizza il task delle modalità storiche
+esplicite, lasciando NULL i casi e le analisi con acquisizione non confermata.
+
+Specifiche complete: [WOUNDS.md](WOUNDS.md). Prompt app: [PROMPT_APP_WOUNDS.md](PROMPT_APP_WOUNDS.md).
+
 ## Creazione e invio paziente
 
 `POST /api/cases` → 201, dettaglio completo:
@@ -27,8 +55,8 @@ Richieste senza `mode`: 422, senza inferenza automatica o default dermatoscopico
 `mode` obbligatorio: `clinical` per smartphone normale o macro; `dermoscopic` per
 dermatoscopio/adattatore. Tutte le foto del caso hanno la stessa acquisizione.
 SEK non viene convertito in BKL; nessuna modalità viene dedotta dai pixel.
-Il paziente non sceglie il modello: al submit il server congela l’ID default della
-modalità nell’AnalysisRun. Una mancanza del modello lascia waiting_model, senza
+Il paziente sceglie acquisizione e tipo di analisi, non l’architettura: al submit
+il server congela nell’AnalysisRun il modello previsto per quel percorso. Una mancanza del modello lascia waiting_model, senza
 fallback all’altro percorso.
 
 `PATCH /api/cases/{id}/acquisition`, JSON `{expected_version,mode}`, solo paziente
@@ -72,8 +100,8 @@ semplice e download. Grad-CAM non è una maschera di lesione o probabilità per 
 ```
 
 `mode` facoltativo se già confermato; obbligatorio per uno storico senza modalità.
-`model_id` facoltativo: conserva il modello precedente se della stessa modalità,
-altrimenti usa il default della modalità confermata. `explanation_target` omesso/null:
+`model_id` facoltativo: conserva il modello precedente se compatibile con modalità
+e task richiesti; altrimenti risolve il modello del percorso selezionato. `explanation_target` omesso/null:
 mappa per la classe predetta su ogni foto; classe specificata: stessa classe su tutte
 le foto. Etichette esatte del catalogo; nessuna equivalenza NEV/NV o SEK/BKL.
 Modello/classe incompatibili: 400. Stati ammessi: waiting_model, analysis_failed,
@@ -108,7 +136,7 @@ share_explanation), published_segmentations e il nuovo `published_explanations`:
 ```
 
 Array vuoto finché non condiviso. Le mappe esposte sono quelle dell’ultima revisione
-del caso, se approvata/corretta e coerente con la modalità corrente. Una nuova revisione
+del caso, se approvata/corretta e coerente con modalità e tipo di analisi correnti. Una nuova revisione
 senza consenso revoca l’accesso alle precedenti mappe, anche usando URL già noti.
 La revisione `needs_images` non pubblica mappe. Le valutazioni testuali storiche
 rimangono in reviews. Prima della successiva revisione restano solo le mappe già

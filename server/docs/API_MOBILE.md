@@ -36,6 +36,8 @@ accettano gli stessi formati e 40 MiB, ma massimo 25 MP (invii rapidi: 80 MP).
 `GET /v1/models?mode=clinical` oppure `mode=dermoscopic` (filtro facoltativo).
 Ogni voce contiene `id`, `name`, `mode`, `default`, `available`, `classes`,
 `classification`, `segmentation`, `explanation`, `intended_use`.
+Sono disponibili anche `task`, `scope` e `class_names_it` (mappa etichetta → nome italiano): le classi dipendono dal task del modello,
+oltre che dalla modalita di acquisizione. I modelli esistenti mantengono le loro classi.
 `available` controlla la presenza dei file; integrita e caricamento sono verificati
 all avvio del worker e prima dell inferenza. Nessun percorso o nome Python ricevuto
 via HTTP viene eseguito. Un ID sconosciuto o incompatibile con la modalita e rifiutato.
@@ -45,8 +47,18 @@ via HTTP viene eseguito. Un ID sconosciuto o incompatibile con la modalita e rif
 | clinical-convnextv2-tiny | clinical | ACK,BCC,MEL,NEV,SCC,SEK | no |
 | clinical-dinov2-base | clinical | ACK,BCC,MEL,NEV,SCC,SEK | no |
 | dermoscopic-ftn | dermoscopic | AK,BCC,BKL,DF,MEL,NV,VASC | modello FTN separato |
+| clinical-wounds-azh | clinical | diabetic,pressure,surgical,venous | no |
 
-I modelli clinici sono classificatori a sei classi. SEK non e l intera categoria
+Il modello `clinical-wounds-azh` è abilitato per ricerca: `mode=clinical`,
+`task=wound_type`, classi `diabetic,pressure,surgical,venous` e
+`scope=four_known_wound_types_only`. Negli invii rapidi richiede `model_id` esplicito;
+non diventa il default clinico. La classificazione include `task`, `scope` e
+`class_names_it`, oltre a etichette, punteggi e calibrazione. Grad-CAM usa le classi
+del modello selezionato; la segmentazione è assente. Il task comprende soltanto
+quattro categorie note di ferita, senza classe sana/altro o rifiuto validato.
+Dettagli e nuovo campo dei casi paziente: [WOUNDS.md](WOUNDS.md).
+
+I due modelli clinici dedicati alle lesioni PAD sono classificatori a sei classi. SEK non e l intera categoria
 BKL e nessuna conversione fra classi viene applicata. Il contratto del FTN realmente
 disponibile contiene sette classi e nessuna SCC: non viene rinominato come modello
 ISIC a otto classi. Una macro rimane clinical; un adattatore dermatoscopico implica

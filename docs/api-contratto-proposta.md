@@ -2,6 +2,14 @@
 
 > **Implementato nel server del repository.** Il contratto di ricevuta descritto sotto resta retrocompatibile; la specifica corrente aggiunge autenticazione medico, `model_id`, catalogo, stato, risultati e mappe: [server/docs/API_MOBILE.md](../server/docs/API_MOBILE.md). Le sezioni storiche sulla autenticazione da definire sono superate da `/v1/session`. La conferma di ricezione resta distinta dall analisi.
 
+## Estensione per ferite e ulcere
+
+Specifiche del server di ricerca: [Ferite e ulcere](../server/docs/WOUNDS.md).
+Prompt per il client Flutter: [PROMPT_APP_WOUNDS](../server/docs/PROMPT_APP_WOUNDS.md).
+L'estensione aggiunge `analysis_task` facoltativo ai casi paziente e i metadati del
+modello `clinical-wounds-azh`, mantenendo `mode=clinical`. Negli invii rapidi
+`/v1/submissions` il task si seleziona con `model_id`, senza aggiungere campi multipart.
+
 ## Aggiornamento casi paziente: contratto 2
 
 Specifica implementata e prevalente: [Grad-CAM nei casi](../server/docs/CASE_GRADCAM.md).
