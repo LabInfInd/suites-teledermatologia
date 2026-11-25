@@ -4,12 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../api/cases_api.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/patient_case.dart';
 import 'case_widgets.dart';
+import 'messages.dart';
 import 'widgets.dart';
 
 /// Crea un caso del paziente. La modalità di acquisizione è obbligatoria e
-/// vale per tutte le foto del caso; le foto si aggiungono subito dopo.
+/// vale per tutte le foto del caso; le foto si aggiungono subito dopo. Sui
+/// server che lo supportano si sceglie anche il tipo di analisi: le ferite
+/// vanno scelte esplicitamente, mai dedotte dalla foto.
 class NewCasePage extends StatefulWidget {
   const NewCasePage({super.key, required this.api});
 
@@ -23,12 +27,30 @@ class _NewCasePageState extends State<NewCasePage> {
   final _bodySite = TextEditingController();
   final _notes = TextEditingController();
   AcquisitionMode? _mode;
+  AnalysisTask? _task;
   bool _confirmed = false;
   bool _busy = false;
 
   /// `null` finché non si sa se il server supporta il contratto 2.
-  bool? _supported;
+  ServerStatus? _status;
   String? _statusError;
+
+  bool? get _supported => _status?.supportsAcquisitionModes;
+
+  /// Tipi di analisi della modalità scelta; vuoto sui server precedenti.
+  List<AnalysisTask> get _tasks {
+    final mode = _mode;
+    return mode == null ? const [] : _status?.tasksFor(mode) ?? const [];
+  }
+
+  void _selectMode(AcquisitionMode mode) {
+    setState(() {
+      _mode = mode;
+      // Un solo tipo di analisi (dermatoscopia): nessuna scelta da fare.
+      final tasks = _tasks;
+      _task = tasks.length == 1 ? tasks.single : null;
+    });
+  }
 
   @override
   void initState() {
@@ -46,10 +68,10 @@ class _NewCasePageState extends State<NewCasePage> {
   /// Un server senza modalità di acquisizione assegnerebbe un percorso
   /// sbagliato: in quel caso la creazione resta bloccata.
   Future<void> _checkServer() async {
-    setState(() => (_supported = null, _statusError = null));
+    setState(() => (_status = null, _statusError = null));
     try {
       final status = await widget.api.status();
-      if (mounted) setState(() => _supported = status.supportsAcquisitionModes);
+      if (mounted) setState(() => _status = status);
     } on CasesFailure catch (e) {
       if (mounted) setState(() => _statusError = e.message);
     }
@@ -57,11 +79,13 @@ class _NewCasePageState extends State<NewCasePage> {
 
   Future<void> _create() async {
     final mode = _mode;
-    if (mode == null) return;
+    final tasks = _tasks;
+    if (mode == null || (tasks.isNotEmpty && !tasks.contains(_task))) return;
     setState(() => _busy = true);
     try {
       final CaseDetails created = await widget.api.create(
         mode: mode,
+        task: tasks.isEmpty ? null : _task,
         bodySite: _bodySite.text.trim(),
         notes: _notes.text.trim(),
       );
@@ -76,6 +100,9 @@ class _NewCasePageState extends State<NewCasePage> {
   @override
   Widget build(BuildContext context) {
     final ready = _supported == true;
+    final tasks = _tasks;
+    final taskMissing = tasks.isNotEmpty && !tasks.contains(_task);
+    final wound = _task == AnalysisTask.woundType;
     return Scaffold(
       appBar: AppBar(title: const Text('Nuovo caso')),
       body: SafeArea(
@@ -112,18 +139,31 @@ class _NewCasePageState extends State<NewCasePage> {
             ModeSelector(
               value: _mode,
               enabled: ready && !_busy,
-              onChanged: (mode) => setState(() => _mode = mode),
+              onChanged: _selectMode,
             ),
+            if (tasks.isNotEmpty) ...[
+              const SectionTitle('Cosa vuoi far valutare?'),
+              TaskSelector(
+                tasks: tasks,
+                value: _task,
+                enabled: ready && !_busy,
+                onChanged: (task) => setState(() => _task = task),
+              ),
+            ],
             const SizedBox(height: 16),
             TextField(
               key: const ValueKey('body-site'),
               controller: _bodySite,
               enabled: !_busy,
               maxLength: 80,
-              decoration: const InputDecoration(
-                labelText: 'Dove si trova la lesione? (facoltativo)',
-                hintText: 'Es. avambraccio sinistro',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: wound
+                    ? 'Dove si trova la ferita? (facoltativo)'
+                    : 'Dove si trova la lesione? (facoltativo)',
+                hintText: wound
+                    ? 'Es. piede destro'
+                    : 'Es. avambraccio sinistro',
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 8),
@@ -154,15 +194,18 @@ class _NewCasePageState extends State<NewCasePage> {
               ),
             ),
             const SizedBox(height: 16),
-            if (ready && _mode == null)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
+            if (ready && (_mode == null || taskMissing))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
-                  'Scegli la modalità di acquisizione per continuare.',
+                  _mode == null
+                      ? 'Scegli la modalità di acquisizione per continuare.'
+                      : 'Scegli il tipo di analisi per continuare.',
                 ),
               ),
             FilledButton(
-              onPressed: ready && _mode != null && _confirmed && !_busy
+              onPressed:
+                  ready && _mode != null && !taskMissing && _confirmed && !_busy
                   ? _create
                   : null,
               child: Text(
@@ -208,6 +251,54 @@ class ModeSelector extends StatelessWidget {
               enabled: enabled,
               title: Text(caseModeLabel(mode)),
               subtitle: Text(caseModeDescription(mode)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Scelta esplicita del tipo di analisi tra quelli offerti dal server per la
+/// modalità, senza valore predefinito. Con un solo tipo lo mostra soltanto.
+class TaskSelector extends StatelessWidget {
+  const TaskSelector({
+    super.key,
+    required this.tasks,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final List<AnalysisTask> tasks;
+  final AnalysisTask? value;
+  final ValueChanged<AnalysisTask> onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (tasks.length == 1) {
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.check_circle_outline),
+        title: Text(tasks.single.label),
+        subtitle: Text(tasks.single.description),
+      );
+    }
+    return RadioGroup<AnalysisTask>(
+      groupValue: value,
+      onChanged: (task) {
+        if (task != null && enabled) onChanged(task);
+      },
+      child: Column(
+        children: [
+          for (final task in tasks)
+            RadioListTile<AnalysisTask>(
+              key: ValueKey('task-${task.apiValue}'),
+              contentPadding: EdgeInsets.zero,
+              value: task,
+              enabled: enabled,
+              title: Text(task.label),
+              subtitle: Text(task.description),
             ),
         ],
       ),

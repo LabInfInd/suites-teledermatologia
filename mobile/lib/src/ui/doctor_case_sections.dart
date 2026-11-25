@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../api/cases_api.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
+import '../domain/model_catalog.dart';
 import '../domain/patient_case.dart';
 import 'case_widgets.dart';
+import 'messages.dart';
 import 'new_case_page.dart';
 import 'widgets.dart';
 
@@ -32,8 +35,11 @@ class ReviewDraft {
   }
 }
 
+CatalogModel? _model(List<CatalogModel>? catalog, String? id) =>
+    catalog?.where((m) => m.id == id).firstOrNull;
+
 String _modelName(List<CatalogModel>? catalog, String? id) =>
-    catalog?.where((m) => m.id == id).firstOrNull?.name ?? id ?? 'non indicato';
+    _model(catalog, id)?.name ?? id ?? 'non indicato';
 
 /// Risultato del modello: solo per il medico (il server non lo invia al
 /// paziente).
@@ -65,8 +71,9 @@ class AnalysisSection extends StatelessWidget {
         else ...[
           Text(
             'Modalità: ${caseModeLabel(analysis.mode)} · '
+            '${analysis.analysisTask == null ? '' : 'Tipo di analisi: ${analysis.analysisTask!.label} · '}'
             'Modello: ${_modelName(catalog, analysis.modelId)} · '
-            'Grad-CAM per: ${analysis.explanationTarget ?? 'classe predetta di ogni foto'}',
+            'Grad-CAM per: ${analysis.explanationTarget == null ? 'classe predetta di ogni foto' : classDisplayName(analysis.explanationTarget!, _model(catalog, analysis.modelId)?.classNamesIt)}',
           ),
           const SizedBox(height: 8),
           if (!analysis.completed)
@@ -89,6 +96,10 @@ class AnalysisSection extends StatelessWidget {
                   api: api,
                   image: image,
                   result: result,
+                  catalogNames:
+                      _model(catalog, analysis.modelId)?.classNamesIt ??
+                      const {},
+                  wound: analysis.analysisTask == AnalysisTask.woundType,
                 ),
         ],
       ],
@@ -106,11 +117,19 @@ class AnalysisImageCard extends StatefulWidget {
     required this.api,
     required this.image,
     required this.result,
+    this.catalogNames = const {},
+    this.wound = false,
   });
 
   final CasesApi api;
   final CaseImage image;
   final AnalysisImage result;
+
+  /// `class_names_it` del modello nel catalogo, se il risultato non li ha.
+  final Map<String, String> catalogNames;
+
+  /// Analisi del percorso ferite secondo il caso.
+  final bool wound;
 
   @override
   State<AnalysisImageCard> createState() => _AnalysisImageCardState();
@@ -126,6 +145,11 @@ class _AnalysisImageCardState extends State<AnalysisImageCard> {
     final result = widget.result;
     final image = widget.image;
     final explanation = result.explanation;
+    final names = {
+      ...widget.catalogNames,
+      ...result.classification.classNamesIt,
+    };
+    final wound = widget.wound || result.classification.isWound;
     final view = switch (_view) {
       _MapView.gradcam when result.heatmapCompositeUrl == null =>
         _MapView.photo,
@@ -185,22 +209,32 @@ class _AnalysisImageCardState extends State<AnalysisImageCard> {
               ),
             },
             const SizedBox(height: 8),
+            if (wound)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: Text(woundResearchNotice),
+              ),
             if (result.modelName.isNotEmpty)
               Text(
                 'Modello: ${result.modelName}'
                 '${result.modelVersion.isEmpty ? '' : ' (versione ${result.modelVersion})'}',
               ),
-            for (final row in result.labels.take(3))
-              Text('${row.label}: ${(row.score * 100).toStringAsFixed(1)}%'),
+            // Punteggi associati per etichetta, dal più alto.
+            for (final row in result.labels.take(4))
+              Text(
+                '${classDisplayName(row.label, names)}: ${(row.score * 100).toStringAsFixed(1)}%',
+              ),
             const SizedBox(height: 4),
             Text(
               explanation.targetClass == null
                   ? 'Grad-CAM non disponibile (${explanation.status}).'
-                  : 'Grad-CAM per la classe «${explanation.targetClass}» · ${explanation.status}',
+                  : 'Grad-CAM per la classe «${classDisplayName(explanation.targetClass!, names)}» · ${explanation.status}',
             ),
             if (explanation.status == 'no_positive_signal')
-              const Text(
-                'Nessun contributo positivo per la classe spiegata: non significa assenza di lesione.',
+              Text(
+                wound
+                    ? 'Nessun contributo positivo per la classe spiegata: non significa assenza di ferita.'
+                    : 'Nessun contributo positivo per la classe spiegata: non significa assenza di lesione.',
               ),
             Text(
               view == _MapView.segmentation
@@ -217,12 +251,14 @@ class _AnalysisImageCardState extends State<AnalysisImageCard> {
 
 typedef ReanalyzeRequest = Future<void> Function(
   AcquisitionMode? mode,
+  AnalysisTask? task,
   String? modelId,
   String? explanationTarget,
 );
 
-/// Nuova analisi: modalità (obbligatoria per i casi storici), modello del
-/// catalogo e classe da spiegare con Grad-CAM.
+/// Nuova analisi: modalità (obbligatoria per i casi storici), tipo di
+/// analisi, modello del catalogo e classe da spiegare con Grad-CAM. I target
+/// vengono dalle classi del modello scelto e si azzerano cambiando modello.
 class ReanalyzePanel extends StatefulWidget {
   const ReanalyzePanel({
     super.key,
@@ -245,17 +281,26 @@ class ReanalyzePanel extends StatefulWidget {
 
 class _ReanalyzePanelState extends State<ReanalyzePanel> {
   late AcquisitionMode? _mode = widget.data.mode;
+  late AnalysisTask? _task =
+      widget.data.latestAnalysis?.analysisTask ?? widget.data.analysisTask;
   String? _modelId;
   String? _target;
 
-  String? _defaultModel(List<CatalogModel> models) {
+  /// Modello precedente se compatibile con modalità e task; per le ferite il
+  /// modello ferite; altrimenti il predefinito del percorso. Mai un modello
+  /// di un altro tipo di analisi.
+  String? _defaultModel(
+    List<CatalogModel> catalog,
+    List<CatalogModel> available,
+    AnalysisTask task,
+  ) {
     final previous = widget.data.latestAnalysis;
-    final available = models.where((m) => m.available).toList();
     if (previous != null &&
         previous.mode == _mode &&
         available.any((m) => m.id == previous.modelId)) {
       return previous.modelId;
     }
+    if (task == AnalysisTask.woundType) return woundModel(catalog)?.id;
     return (available.where((m) => m.isDefault).firstOrNull ??
             available.firstOrNull)
         ?.id;
@@ -265,12 +310,24 @@ class _ReanalyzePanelState extends State<ReanalyzePanel> {
   Widget build(BuildContext context) {
     final mode = _mode;
     final catalog = mode == null ? null : widget.catalogFor(mode);
-    final available = catalog?.where((m) => m.available).toList() ?? const [];
-    final modelId =
-        _modelId ?? (catalog == null ? null : _defaultModel(catalog));
-    final classes =
-        available.where((m) => m.id == modelId).firstOrNull?.classes ??
-        const <String>[];
+    final tasks = mode == null || catalog == null
+        ? const <AnalysisTask>[]
+        : catalogTasks(catalog, mode);
+    final task = tasks.contains(_task)
+        ? _task
+        : tasks.length == 1
+        ? tasks.single
+        : null;
+    final available = mode == null || catalog == null || task == null
+        ? const <CatalogModel>[]
+        : catalogModelsFor(catalog, mode, task);
+    final modelId = available.any((m) => m.id == _modelId)
+        ? _modelId
+        : catalog == null || task == null
+        ? null
+        : _defaultModel(catalog, available, task);
+    final model = available.where((m) => m.id == modelId).firstOrNull;
+    final classes = model?.classes ?? const <String>[];
     final historical = widget.data.mode == null;
     return Card(
       margin: const EdgeInsets.only(top: 8),
@@ -290,17 +347,47 @@ class _ReanalyzePanelState extends State<ReanalyzePanel> {
             value: mode,
             enabled: !widget.busy,
             onChanged: (value) {
-              setState(() => (_mode = value, _modelId = null, _target = null));
+              setState(
+                () => (
+                  _mode = value,
+                  _task = null,
+                  _modelId = null,
+                  _target = null,
+                ),
+              );
               widget.onNeedCatalog(value);
             },
           ),
           if (mode != null && catalog == null) const LinearProgressIndicator(),
-          if (mode != null && catalog != null && available.isEmpty)
-            const Text('Nessun modello disponibile per questa modalità.'),
+          if (tasks.length > 1) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Tipo di analisi',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            TaskSelector(
+              tasks: tasks,
+              value: task,
+              enabled: !widget.busy,
+              onChanged: (value) => setState(
+                () => (_task = value, _modelId = null, _target = null),
+              ),
+            ),
+          ],
+          if (mode != null &&
+              catalog != null &&
+              task != null &&
+              available.isEmpty)
+            Text(
+              task == AnalysisTask.woundType
+                  ? 'Modello per ferite e ulcere non disponibile: la nuova analisi non viene avviata con un altro modello.'
+                  : 'Nessun modello disponibile per questa modalità.',
+              key: const ValueKey('reanalyze-no-model'),
+            ),
           if (available.isNotEmpty) ...[
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
-              key: ValueKey('reanalyze-model-${mode?.apiValue}'),
+              key: ValueKey('reanalyze-model-${mode?.apiValue}-${task?.name}'),
               initialValue: modelId,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -334,7 +421,10 @@ class _ReanalyzePanelState extends State<ReanalyzePanel> {
                   child: Text('Classe predetta di ogni foto'),
                 ),
                 for (final label in classes)
-                  DropdownMenuItem<String?>(value: label, child: Text(label)),
+                  DropdownMenuItem<String?>(
+                    value: label,
+                    child: Text(model!.nameOf(label)),
+                  ),
               ],
               onChanged: widget.busy
                   ? null
@@ -347,6 +437,8 @@ class _ReanalyzePanelState extends State<ReanalyzePanel> {
             onPressed: mode != null && modelId != null && !widget.busy
                 ? () => widget.onSubmit(
                     mode == widget.data.mode ? null : mode,
+                    // Solo i server che dichiarano il task lo ricevono.
+                    model?.declaresTask == true ? task : null,
                     modelId,
                     classes.contains(_target) ? _target : null,
                   )
@@ -427,10 +519,13 @@ class _ReviewSectionState extends State<ReviewSection> {
   bool get _requestsImages => _draft.decision == ReviewDecision.needsImages;
   String get _label => _draft.label.text.trim();
 
-  List<String>? get _modelClasses => widget.catalog
-      ?.where((m) => m.id == _analysis?.modelId)
-      .firstOrNull
-      ?.classes;
+  CatalogModel? get _analysisModel =>
+      _model(widget.catalog, _analysis?.modelId);
+
+  List<String>? get _modelClasses => _analysisModel?.classes;
+
+  String _nameOf(String label) =>
+      classDisplayName(label, _analysisModel?.classNamesIt);
 
   void _onLabelChanged(String value) {
     // Come sul web: un'etichetta diversa dalla predizione è una correzione.
@@ -578,9 +673,13 @@ class _ReviewSectionState extends State<ReviewSection> {
             enabled: !widget.busy,
             maxLength: 160,
             onChanged: _onLabelChanged,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Classificazione da comunicare',
-              border: OutlineInputBorder(),
+              // Si pubblica l'etichetta API; il nome italiano aiuta la verifica.
+              helperText: label.isNotEmpty && _nameOf(label) != label
+                  ? 'Il paziente leggerà: ${_nameOf(label)}'
+                  : null,
+              border: const OutlineInputBorder(),
             ),
           ),
           if (_suggested.length > 1)
@@ -589,7 +688,7 @@ class _ReviewSectionState extends State<ReviewSection> {
               children: [
                 for (final suggestion in _suggested)
                   ActionChip(
-                    label: Text(suggestion),
+                    label: Text(_nameOf(suggestion)),
                     onPressed: () {
                       _draft.label.text = suggestion;
                       _onLabelChanged(suggestion);

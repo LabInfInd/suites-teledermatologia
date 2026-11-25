@@ -1,5 +1,6 @@
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/captured_photo.dart';
 import '../domain/case_code.dart';
 import '../domain/submission.dart';
@@ -34,6 +35,23 @@ extension AcquisitionModeText on AcquisitionMode {
   String get submitLabel => switch (this) {
     AcquisitionMode.clinical => 'Invia foto clinica',
     AcquisitionMode.dermoscopic => 'Invia immagine dermatoscopica',
+  };
+}
+
+extension AnalysisTaskText on AnalysisTask {
+  String get label => switch (this) {
+    AnalysisTask.skinLesion => 'Lesioni cutanee',
+    AnalysisTask.woundType => 'Ferite e ulcere',
+    AnalysisTask.dermoscopicLesion => 'Lesioni cutanee in dermatoscopia',
+  };
+
+  String get description => switch (this) {
+    AnalysisTask.skinLesion => 'Nei, macchie e altre lesioni della pelle.',
+    AnalysisTask.woundType =>
+      'Ferite e ulcere, per la ricerca del progetto. '
+          'La classificazione è sperimentale e richiede valutazione medica.',
+    AnalysisTask.dermoscopicLesion =>
+      'Lesioni della pelle acquisite con il dermatoscopio.',
   };
 }
 

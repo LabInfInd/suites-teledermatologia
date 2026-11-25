@@ -1,4 +1,8 @@
 import 'acquisition_mode.dart';
+import 'analysis_task.dart';
+import 'model_catalog.dart';
+
+export 'model_catalog.dart' show CatalogModel, Classification, LabelScore;
 
 /// Caso di teledermatologia del paziente, come restituito da `/api/cases`
 /// (contratto 2, `server/docs/CASE_GRADCAM.md`).
@@ -67,6 +71,7 @@ class CaseSummary {
     required this.version,
     required this.imageCount,
     this.mode,
+    this.analysisTask,
     this.patientCode,
     this.updatedAt,
   });
@@ -79,6 +84,7 @@ class CaseSummary {
     version: json['version'] as int,
     imageCount: json['image_count'] as int? ?? 0,
     mode: parseAcquisitionMode(json['mode']),
+    analysisTask: AnalysisTask.parse(json['analysis_task']),
     patientCode: json['patient_code'] as String?,
     updatedAt: _date(json['updated_at']),
   );
@@ -92,6 +98,10 @@ class CaseSummary {
 
   /// `null` nei casi storici: va confermata prima dell'analisi.
   final AcquisitionMode? mode;
+
+  /// Tipo di analisi scelto; `null` sui server precedenti e nei casi storici
+  /// senza modalità confermata.
+  final AnalysisTask? analysisTask;
 
   /// Presente solo per il medico.
   final String? patientCode;
@@ -183,13 +193,6 @@ class CaseReview {
   final DateTime? createdAt;
 }
 
-class LabelScore {
-  const LabelScore(this.label, this.score);
-
-  final String label;
-  final double score;
-}
-
 /// Metadati Grad-CAM di una foto analizzata.
 class ExplanationInfo {
   const ExplanationInfo({required this.status, this.method, this.targetClass});
@@ -217,9 +220,7 @@ class ExplanationInfo {
 class AnalysisImage {
   const AnalysisImage({
     required this.imageId,
-    required this.labels,
-    required this.modelName,
-    this.modelVersion = '',
+    required this.classification,
     this.segmentationAvailable = false,
     this.maskUrl,
     this.overlayUrl,
@@ -230,20 +231,9 @@ class AnalysisImage {
   });
 
   factory AnalysisImage.fromJson(Map<String, dynamic> json) {
-    final classification = json['classification'];
-    final info = classification is Map<String, dynamic>
-        ? classification
-        : const <String, dynamic>{};
     return AnalysisImage(
       imageId: json['image_id'] as String,
-      labels: _rows(info['labels'])
-          .map(
-            (r) =>
-                LabelScore(_text(r['label']), (r['score'] as num).toDouble()),
-          )
-          .toList(),
-      modelName: _text(info['model_name']),
-      modelVersion: _text(info['model_version']),
+      classification: Classification.fromJson(json['classification']),
       segmentationAvailable: json['segmentation_available'] == true,
       maskUrl: _optional(json['mask_url']),
       overlayUrl: _optional(json['overlay_url']),
@@ -255,9 +245,12 @@ class AnalysisImage {
   }
 
   final String imageId;
-  final List<LabelScore> labels;
-  final String modelName;
-  final String modelVersion;
+  final Classification classification;
+
+  /// Dal punteggio più alto, associati per etichetta.
+  List<LabelScore> get labels => classification.labels;
+  String get modelName => classification.modelName;
+  String get modelVersion => classification.modelVersion;
 
   /// Segmentazione (solo FTN): separata da Grad-CAM.
   final bool segmentationAvailable;
@@ -273,7 +266,7 @@ class AnalysisImage {
   /// Foto già composta con Grad-CAM: non va sovrapposta di nuovo.
   final String? heatmapCompositeUrl;
 
-  String? get topLabel => labels.isEmpty ? null : labels.first.label;
+  String? get topLabel => classification.topLabel;
 
   bool get hasSegmentation =>
       segmentationAvailable && overlayUrl != null && maskUrl != null;
@@ -295,6 +288,7 @@ class CaseAnalysis {
     required this.state,
     required this.images,
     this.mode,
+    this.analysisTask,
     this.modelId,
     this.explanationTarget,
     this.failureCode,
@@ -304,6 +298,7 @@ class CaseAnalysis {
     id: json['id'] as String,
     state: _text(json['state']),
     mode: parseAcquisitionMode(json['mode']),
+    analysisTask: AnalysisTask.parse(json['analysis_task']),
     modelId: _optional(json['model_id']),
     explanationTarget: _optional(json['explanation_target']),
     failureCode: json['failure_code'] as String?,
@@ -315,6 +310,9 @@ class CaseAnalysis {
 
   /// `null` per le analisi storiche senza modalità.
   final AcquisitionMode? mode;
+
+  /// `null` sui server precedenti e nelle analisi storiche.
+  final AnalysisTask? analysisTask;
   final String? modelId;
 
   /// Classe richiesta per Grad-CAM; `null` = classe predetta per ogni foto.
@@ -403,6 +401,7 @@ class CaseDetails extends CaseSummary {
     required super.version,
     required super.imageCount,
     super.mode,
+    super.analysisTask,
     super.patientCode,
     super.updatedAt,
     this.createdAt,
@@ -424,6 +423,7 @@ class CaseDetails extends CaseSummary {
       version: summary.version,
       imageCount: summary.imageCount,
       mode: summary.mode,
+      analysisTask: summary.analysisTask,
       patientCode: summary.patientCode,
       updatedAt: summary.updatedAt,
       createdAt: _date(json['created_at']),
@@ -463,45 +463,14 @@ class CaseDetails extends CaseSummary {
       images.where((i) => i.id == id).firstOrNull;
 }
 
-/// Catalogo di `/api/models` (solo medico).
-class CatalogModel {
-  const CatalogModel({
-    required this.id,
-    required this.name,
-    required this.mode,
-    required this.classes,
-    this.isDefault = false,
-    this.available = true,
-    this.segmentation = false,
-  });
-
-  factory CatalogModel.fromJson(Map<String, dynamic> json) => CatalogModel(
-    id: json['id'] as String,
-    name: _text(json['name']),
-    mode: parseAcquisitionMode(json['mode']),
-    classes: (json['classes'] as List? ?? const [])
-        .whereType<String>()
-        .toList(),
-    isDefault: json['default'] == true,
-    available: json['available'] != false,
-    segmentation: json['segmentation'] == true,
-  );
-
-  final String id;
-  final String name;
-  final AcquisitionMode? mode;
-  final List<String> classes;
-  final bool isDefault;
-  final bool available;
-  final bool segmentation;
-}
-
 /// `GET /api/status`: serve a rifiutare server senza il contratto 2.
 class ServerStatus {
   const ServerStatus({
     required this.caseContractVersion,
     required this.acquisitionModes,
     required this.maxImages,
+    this.analysisTaskContractVersion = 0,
+    this.analysisTasks = const [],
   });
 
   factory ServerStatus.fromJson(Map<String, dynamic> json) => ServerStatus(
@@ -511,6 +480,12 @@ class ServerStatus {
         .whereType<AcquisitionMode>()
         .toList(),
     maxImages: json['max_images'] as int? ?? maxCaseImages,
+    analysisTaskContractVersion:
+        json['analysis_task_contract_version'] as int? ?? 0,
+    analysisTasks: (json['analysis_tasks'] as List? ?? const [])
+        .map(AnalysisTask.parse)
+        .whereType<AnalysisTask>()
+        .toList(),
   );
 
   static const requiredContract = 2;
@@ -519,6 +494,22 @@ class ServerStatus {
   final List<AcquisitionMode> acquisitionModes;
   final int maxImages;
 
+  /// `0` sui server senza tipo di analisi: i casi seguono il percorso delle
+  /// lesioni della modalità e `analysis_task` non va inviato.
+  final int analysisTaskContractVersion;
+  final List<AnalysisTask> analysisTasks;
+
   bool get supportsAcquisitionModes =>
       caseContractVersion >= requiredContract && acquisitionModes.isNotEmpty;
+
+  bool get supportsAnalysisTasks =>
+      supportsAcquisitionModes &&
+      analysisTaskContractVersion >= 1 &&
+      analysisTasks.isNotEmpty;
+
+  /// Tipi di analisi selezionabili per una modalità; vuoto sui server
+  /// precedenti, dove si conserva il flusso senza tipo di analisi.
+  List<AnalysisTask> tasksFor(AcquisitionMode mode) => supportsAnalysisTasks
+      ? analysisTasks.where((t) => t.mode == mode).toList()
+      : const [];
 }

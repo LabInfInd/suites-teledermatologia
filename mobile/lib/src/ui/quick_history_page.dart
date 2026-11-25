@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api/cases_api.dart';
 import '../api/user_session.dart';
+import '../domain/analysis_task.dart';
 import 'case_widgets.dart';
 import 'submission_result_page.dart';
 
@@ -66,7 +67,7 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
                         'completed' =>
                           item.topLabel == null
                               ? 'Completata'
-                              : '${item.topLabel}${item.topScore == null ? '' : ' ${(item.topScore! * 100).toStringAsFixed(1)}%'}',
+                              : '${classDisplayName(item.topLabel!)}${item.topScore == null ? '' : ' ${(item.topScore! * 100).toStringAsFixed(1)}%'}',
                         'failed' => 'Non riuscita',
                         'running' => 'In corso',
                         _ => 'In coda',

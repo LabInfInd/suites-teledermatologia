@@ -2,31 +2,71 @@ import 'package:flutter/material.dart';
 
 import '../api/cases_api.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/patient_case.dart';
 import 'case_widgets.dart';
 import 'new_case_page.dart';
 import 'widgets.dart';
 
-/// Modalità del caso dal lato paziente: modificabile in bozza; con nuove foto
+/// Percorso del caso dal lato paziente (modalità e, sui server che lo
+/// supportano, tipo di analisi): modificabile in bozza; con nuove foto
 /// richieste si può solo confermare una modalità storica mancante.
-class PatientModeSection extends StatelessWidget {
+class PatientModeSection extends StatefulWidget {
   const PatientModeSection({
     super.key,
     required this.data,
     required this.busy,
+    required this.tasksFor,
     required this.onSelect,
   });
 
   final CaseDetails data;
   final bool busy;
-  final ValueChanged<AcquisitionMode> onSelect;
+
+  /// Tipi di analisi offerti dal server per una modalità; vuoto sui server
+  /// precedenti.
+  final List<AnalysisTask> Function(AcquisitionMode mode) tasksFor;
+  final void Function(AcquisitionMode mode, AnalysisTask? task) onSelect;
+
+  @override
+  State<PatientModeSection> createState() => _PatientModeSectionState();
+}
+
+class _PatientModeSectionState extends State<PatientModeSection> {
+  /// Modalità scelta ma non ancora salvata, in attesa del tipo di analisi.
+  AcquisitionMode? _pending;
+
+  @override
+  void didUpdateWidget(PatientModeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.data.version != widget.data.version) _pending = null;
+  }
+
+  void _selectMode(AcquisitionMode mode) {
+    final data = widget.data;
+    if (mode == data.mode) {
+      setState(() => _pending = null);
+      return;
+    }
+    final tasks = widget.tasksFor(mode);
+    if (tasks.length > 1) {
+      // Il tipo di analisi va scelto esplicitamente prima di salvare.
+      setState(() => _pending = mode);
+      return;
+    }
+    widget.onSelect(mode, tasks.length == 1 ? tasks.single : null);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final data = widget.data;
     final editable =
         data.state == CaseState.draft ||
         (data.state == CaseState.needsImages && data.mode == null);
     if (!editable) return const SizedBox.shrink();
+    final mode = _pending ?? data.mode;
+    final tasks = mode == null ? const <AnalysisTask>[] : widget.tasksFor(mode);
+    final task = _pending == null ? data.analysisTask : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -45,12 +85,25 @@ class PatientModeSection extends StatelessWidget {
           ),
         const SizedBox(height: 4),
         ModeSelector(
-          value: data.mode,
-          enabled: !busy,
-          onChanged: (mode) {
-            if (mode != data.mode) onSelect(mode);
-          },
+          value: mode,
+          enabled: !widget.busy,
+          onChanged: _selectMode,
         ),
+        if (mode != null && tasks.isNotEmpty) ...[
+          const SectionTitle('Tipo di analisi'),
+          if (tasks.length > 1 && !tasks.contains(task))
+            const Text(
+              'Scegli cosa vuoi far valutare per salvare il percorso.',
+            ),
+          TaskSelector(
+            tasks: tasks,
+            value: task,
+            enabled: !widget.busy,
+            onChanged: (value) {
+              if (value != task) widget.onSelect(mode, value);
+            },
+          ),
+        ],
       ],
     );
   }
@@ -105,7 +158,9 @@ class PatientResponse extends StatelessWidget {
                   style: theme.textTheme.labelMedium,
                 ),
                 Text(
-                  review.finalLabel ?? '',
+                  review.finalLabel == null
+                      ? ''
+                      : classDisplayName(review.finalLabel!),
                   style: theme.textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 12),
@@ -175,7 +230,9 @@ class _PublishedExplanationCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Classe spiegata: ${explanation.targetClass}'),
+            Text(
+              'Classe spiegata: ${classDisplayName(explanation.targetClass)}',
+            ),
             const SizedBox(height: 8),
             // La foto composta contiene già la mappa: nessun overlay aggiuntivo.
             CaseImageView(

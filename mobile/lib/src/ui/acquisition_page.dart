@@ -7,6 +7,7 @@ import 'quick_history_page.dart';
 import 'submission_result_page.dart';
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/captured_photo.dart';
 import '../domain/case_code.dart';
 import '../domain/submission.dart';
@@ -122,46 +123,17 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
                   ..._connectionNotice(),
                   const SectionTitle('1. Tipo di acquisizione'),
                   for (final mode in AcquisitionMode.values)
-                    _ModeOption(
-                      mode: mode,
+                    _ChoiceOption(
+                      choiceKey: 'mode-${mode.apiValue}',
+                      title: mode.label,
+                      description: mode.description,
                       selected: c.mode == mode,
                       enabled: !c.isLocked,
                       onSelected: () => c.selectMode(mode),
                     ),
                   if (c.mode case final mode?) _Guidance(mode.guidance),
-                  if (widget.session != null && c.mode != null) ...[
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey('model-${c.mode!.name}-${c.modelId}'),
-                      initialValue: c.modelId ?? '',
-                      decoration: const InputDecoration(
-                        labelText: 'Modello di ricerca',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('Predefinito del server'),
-                        ),
-                        for (final model in widget.session!.models.where(
-                          (m) => m.mode == c.mode!.apiValue,
-                        ))
-                          DropdownMenuItem(
-                            value: model.id,
-                            child: Text(
-                              model.name,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                      ],
-                      onChanged: c.isLocked
-                          ? null
-                          : (value) => c.selectModel(
-                              value == null || value.isEmpty ? null : value,
-                            ),
-                      isExpanded: true,
-                    ),
-                  ],
+                  if (widget.session != null && c.mode != null)
+                    ..._analysisChoice(c),
                   const SectionTitle('2. Foto'),
                   _PhotoSection(controller: c, onOpenViewer: _openViewer),
                   const SectionTitle('3. Codice caso'),
@@ -217,6 +189,69 @@ class _AcquisitionPageState extends State<AcquisitionPage> {
         );
       },
     );
+  }
+
+  /// Tipo di analisi e modello degli invii rapidi del medico. Il percorso
+  /// ferite si sceglie esplicitamente e usa solo il modello ferite.
+  List<Widget> _analysisChoice(AcquisitionController c) {
+    final wound = c.task == AnalysisTask.woundType;
+    final models = c.availableModels;
+    return [
+      if (c.availableTasks.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        Text('Tipo di analisi', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        for (final task in c.availableTasks)
+          _ChoiceOption(
+            choiceKey: 'task-${task.apiValue}',
+            title: task.label,
+            description: task.description,
+            selected: c.task == task,
+            enabled: !c.isLocked,
+            onSelected: () => c.selectTask(task),
+          ),
+      ],
+      if (c.woundModelUnavailable)
+        const NoticeCard(
+          key: ValueKey('wound-model-unavailable'),
+          icon: Icons.hourglass_empty,
+          title: 'Modello per ferite e ulcere non disponibile',
+          message:
+              'Il modello non è installato o è disabilitato sul server. '
+              'L’invio resta bloccato: non viene usato un modello per le lesioni cutanee.',
+          isError: true,
+        )
+      else if (!c.needsTaskChoice) ...[
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          key: ValueKey('model-${c.mode!.name}-${c.task?.name}-${c.modelId}'),
+          initialValue: c.modelId ?? '',
+          decoration: const InputDecoration(
+            labelText: 'Modello di ricerca',
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            // Il predefinito del server è un modello per le lesioni cutanee.
+            if (!wound)
+              const DropdownMenuItem(
+                value: '',
+                child: Text('Predefinito del server'),
+              ),
+            for (final model in models)
+              DropdownMenuItem(
+                value: model.id,
+                child: Text(model.name, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: c.isLocked
+              ? null
+              : (value) => c.selectModel(
+                  value == null || value.isEmpty ? null : value,
+                ),
+          isExpanded: true,
+        ),
+      ],
+    ];
   }
 
   List<Widget> _connectionNotice() => switch (widget.connection) {
@@ -281,15 +316,20 @@ class _SimulatedServerBanner extends StatelessWidget {
   }
 }
 
-class _ModeOption extends StatelessWidget {
-  const _ModeOption({
-    required this.mode,
+/// Opzione a scelta singola (tipo di acquisizione o di analisi).
+class _ChoiceOption extends StatelessWidget {
+  const _ChoiceOption({
+    required this.choiceKey,
+    required this.title,
+    required this.description,
     required this.selected,
     required this.enabled,
     required this.onSelected,
   });
 
-  final AcquisitionMode mode;
+  final String choiceKey;
+  final String title;
+  final String description;
   final bool selected;
   final bool enabled;
   final VoidCallback onSelected;
@@ -316,7 +356,7 @@ class _ModeOption extends StatelessWidget {
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
-            key: ValueKey('mode-${mode.apiValue}'),
+            key: ValueKey(choiceKey),
             onTap: enabled ? onSelected : null,
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -333,12 +373,9 @@ class _ModeOption extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(mode.label, style: theme.textTheme.titleSmall),
+                        Text(title, style: theme.textTheme.titleSmall),
                         const SizedBox(height: 2),
-                        Text(
-                          mode.description,
-                          style: theme.textTheme.bodySmall,
-                        ),
+                        Text(description, style: theme.textTheme.bodySmall),
                       ],
                     ),
                   ),
@@ -681,6 +718,8 @@ class _SubmitSection extends StatelessWidget {
     final missing = [
       if (!c.hasServer) 'Configura il collegamento al server',
       if (c.mode == null) 'Seleziona il tipo di acquisizione',
+      if (c.needsTaskChoice) 'Seleziona il tipo di analisi',
+      if (c.woundModelUnavailable) 'Attendi il modello per ferite e ulcere',
       if (c.photo == null) 'Scatta o scegli una foto',
       if (c.caseCodeIssue != null) 'Inserisci un codice caso valido',
     ];

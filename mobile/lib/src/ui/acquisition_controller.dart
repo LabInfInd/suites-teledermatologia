@@ -8,8 +8,10 @@ import '../capture/photo_picker.dart';
 import '../capture/photo_preparation.dart';
 import '../config/app_config.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/captured_photo.dart';
 import '../domain/case_code.dart';
+import '../domain/model_catalog.dart';
 import '../domain/submission.dart';
 
 sealed class UploadState {
@@ -78,7 +80,9 @@ class AcquisitionController extends ChangeNotifier {
     required this._api,
     this.maxUploadBytes = AppConfig.defaultMaxUploadBytes,
     String Function()? newSubmissionId,
-  }) : _newSubmissionId = newSubmissionId ?? generateSubmissionId;
+    List<CatalogModel> Function()? catalog,
+  }) : _newSubmissionId = newSubmissionId ?? generateSubmissionId,
+       _catalog = catalog ?? _noCatalog;
 
   final PhotoPicker _picker;
   final ImageInspector _inspector;
@@ -86,13 +90,67 @@ class AcquisitionController extends ChangeNotifier {
   final String Function() _newSubmissionId;
   final int maxUploadBytes;
 
+  /// Catalogo completo del medico (anche i modelli non disponibili); vuoto
+  /// senza sessione o con il server simulato.
+  final List<CatalogModel> Function() _catalog;
+
+  static List<CatalogModel> _noCatalog() => const [];
+
   AcquisitionMode? _mode;
+  AnalysisTask? _task;
   String? _modelId;
   String? get modelId => _modelId;
 
+  /// Tipo di analisi scelto; `null` finché non viene scelto o se il catalogo
+  /// offre un solo percorso per la modalità.
+  AnalysisTask? get task => _task;
+
+  /// Tipi di analisi tra cui scegliere per la modalità corrente. Vuoto se il
+  /// catalogo non offre alternative: si conserva il flusso precedente.
+  List<AnalysisTask> get availableTasks {
+    final mode = _mode;
+    if (mode == null) return const [];
+    final tasks = catalogTasks(_catalog(), mode);
+    return tasks.length > 1 ? tasks : const [];
+  }
+
+  /// Il percorso va scelto esplicitamente prima dell'invio.
+  bool get needsTaskChoice => _task == null && availableTasks.isNotEmpty;
+
+  /// Modelli disponibili per il percorso corrente: mai quelli di un altro
+  /// tipo di analisi.
+  List<CatalogModel> get availableModels {
+    final mode = _mode;
+    if (mode == null) return const [];
+    final task = _task ?? AnalysisTask.defaultFor(mode);
+    return catalogModelsFor(_catalog(), mode, task);
+  }
+
+  /// Percorso ferite scelto ma nessun modello ferite disponibile: l'invio
+  /// resta bloccato invece di ripiegare sul modello predefinito PAD.
+  bool get woundModelUnavailable =>
+      _task == AnalysisTask.woundType && _modelId == null;
+
   void selectModel(String? value) {
     if (isLocked || value == _modelId) return;
+    // Il percorso ferite richiede sempre un modello ferite esplicito.
+    if (_task == AnalysisTask.woundType &&
+        !availableModels.any((m) => m.id == value)) {
+      return;
+    }
     _modelId = value;
+    _startNewSubmission();
+    _notify();
+  }
+
+  /// Sceglie il tipo di analisi. Per le ferite seleziona il modello ferite
+  /// (`clinical-wounds-azh`); per le lesioni torna al predefinito del server.
+  void selectTask(AnalysisTask task) {
+    if (isLocked || task == _task || task.mode != _mode) return;
+    _task = task;
+    _modelId = task == AnalysisTask.woundType
+        ? woundModel(_catalog())?.id
+        : null;
     _startNewSubmission();
     _notify();
   }
@@ -132,12 +190,15 @@ class AcquisitionController extends ChangeNotifier {
       !isLocked &&
       !_isPicking &&
       _mode != null &&
+      !needsTaskChoice &&
+      !woundModelUnavailable &&
       _photo != null &&
       caseCodeIssue == null;
 
   void selectMode(AcquisitionMode mode) {
     if (isLocked || mode == _mode) return;
     _mode = mode;
+    _task = null;
     _modelId = null;
     _startNewSubmission();
     _notify();
@@ -222,6 +283,8 @@ class AcquisitionController extends ChangeNotifier {
       mode: mode,
       photo: photo,
       modelId: _modelId,
+      // Per le ferite modello e Grad-CAM si chiedono sempre esplicitamente.
+      explain: _task == AnalysisTask.woundType ? true : null,
     );
     final cancel = _cancelUpload = Completer<void>();
     _upload = const UploadInProgress();
@@ -272,6 +335,7 @@ class AcquisitionController extends ChangeNotifier {
   void startNewCase() {
     if (isUploading) return;
     _mode = null;
+    _task = null;
     _modelId = null;
     _caseCode = '';
     startNewPhotoForSameCase();

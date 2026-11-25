@@ -8,6 +8,7 @@ import '../capture/image_inspector.dart';
 import '../capture/photo_picker.dart';
 import '../capture/photo_preparation.dart';
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/captured_photo.dart';
 import '../domain/patient_case.dart';
 import 'acquisition_controller.dart';
@@ -73,6 +74,11 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
   Timer? _poll;
   int _polls = 0;
 
+  /// Solo paziente: tipi di analisi offerti dal server per i casi
+  /// modificabili. Il paziente non chiama mai il catalogo dei modelli.
+  ServerStatus? _status;
+  bool _statusRequested = false;
+
   /// Solo medico: bozza della valutazione e cataloghi per modalità.
   final _draft = ReviewDraft();
   final _catalogs = <AcquisitionMode, List<CatalogModel>>{};
@@ -118,7 +124,27 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     if (_doctor) {
       final mode = data.latestAnalysis?.mode ?? data.mode;
       if (mode != null) unawaited(_loadCatalog(mode));
+    } else if (data.state.acceptsPatientPhotos && !_statusRequested) {
+      _statusRequested = true;
+      unawaited(_loadStatus());
     }
+  }
+
+  Future<void> _loadStatus() async {
+    try {
+      final status = await _api.status();
+      if (mounted) setState(() => _status = status);
+    } on CasesFailure {
+      // Senza stato del server resta il percorso già salvato nel caso.
+    }
+  }
+
+  /// Tipi di analisi selezionabili dal paziente per una modalità. Un caso con
+  /// `analysis_task` proviene da un server che supporta l'estensione.
+  List<AnalysisTask> _tasksFor(AcquisitionMode mode) {
+    final status = _status;
+    if (status != null) return status.tasksFor(mode);
+    return _case?.analysisTask != null ? AnalysisTask.forMode(mode) : const [];
   }
 
   /// Mentre l'analisi è in corso il dettaglio si ricarica da solo; la bozza
@@ -245,13 +271,17 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     }
   }
 
-  Future<void> _setMode(AcquisitionMode mode) async {
+  Future<void> _setMode(AcquisitionMode mode, AnalysisTask? task) async {
     final current = _case;
     if (current == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Modalità: ${caseModeLabel(mode)}'),
+        title: Text(
+          task == null || task == AnalysisTask.defaultFor(mode)
+              ? 'Modalità: ${caseModeLabel(mode)}'
+              : '${caseModeLabel(mode)} · ${task.label}',
+        ),
         content: Text(
           '${caseModeDescription(mode)}\n\n'
           'Confermi che tutte le foto di questo caso sono acquisite così?',
@@ -270,14 +300,17 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
     );
     if (confirmed == true) {
       await _run(
-        () => _api.setAcquisition(current, mode),
-        done: 'Modalità di acquisizione salvata.',
+        () => _api.setAcquisition(current, mode, task: task),
+        done: task == null
+            ? 'Modalità di acquisizione salvata.'
+            : 'Percorso del caso salvato.',
       );
     }
   }
 
   Future<void> _reanalyze(
     AcquisitionMode? mode,
+    AnalysisTask? task,
     String? modelId,
     String? explanationTarget,
   ) async {
@@ -287,6 +320,7 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
       () => _api.reanalyze(
         current,
         mode: mode,
+        task: task,
         modelId: modelId,
         explanationTarget: explanationTarget,
       ),
@@ -295,10 +329,11 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
   }
 
   /// Ricalcolo delle mappe per la classe corretta: stesso modello e stessa
-  /// modalità, la classificazione non cambia.
+  /// modalità (il server ricava il task dal modello), la classificazione non
+  /// cambia.
   Future<void> _recompute(String label) async {
     final analysis = _case?.latestAnalysis;
-    await _reanalyze(null, analysis?.modelId, label);
+    await _reanalyze(null, null, analysis?.modelId, label);
   }
 
   Future<void> _download(PublishedExplanation explanation) async {
@@ -373,6 +408,7 @@ class _CaseDetailPageState extends State<CaseDetailPage> {
                       PatientModeSection(
                         data: data,
                         busy: _busy,
+                        tasksFor: _tasksFor,
                         onSelect: _setMode,
                       ),
                     SectionTitle(
@@ -606,6 +642,8 @@ class _Header extends StatelessWidget {
           const SizedBox(height: 8),
           if (data.patientCode != null) Text('Paziente: ${data.patientCode}'),
           Text('Modalità: ${caseModeLabel(data.mode)}'),
+          if (data.analysisTask case final task?)
+            Text('Tipo di analisi: ${task.label}'),
           if (data.bodySite.isNotEmpty) Text('Sede: ${data.bodySite}'),
           if (data.createdAt != null)
             Text('Creato il ${formatShortDate(data.createdAt)}', style: muted),
@@ -683,7 +721,7 @@ class _ReviewCard extends StatelessWidget {
               style: theme.textTheme.titleSmall,
             ),
             if (review.finalLabel case final label? when label.isNotEmpty)
-              Text('Classificazione: $label'),
+              Text('Classificazione: ${classDisplayName(label)}'),
             const SizedBox(height: 4),
             Text(review.patientMessage),
             if (review.shareExplanation || review.shareSegmentation)

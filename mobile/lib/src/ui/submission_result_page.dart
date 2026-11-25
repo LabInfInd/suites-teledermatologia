@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../api/user_session.dart';
+import '../domain/analysis_task.dart';
+import '../domain/model_catalog.dart';
 
 class SubmissionResultPage extends StatefulWidget {
   const SubmissionResultPage({
@@ -78,9 +80,12 @@ class _SubmissionResultPageState extends State<SubmissionResultPage> {
   @override
   Widget build(BuildContext context) {
     final result = _status?['result'] as Map<String, dynamic>?;
-    final classification = result?['classification'] as Map<String, dynamic>?;
-    final labels = classification?['labels'] as List<dynamic>? ?? [];
+    final classification = result?['classification'] is Map<String, dynamic>
+        ? Classification.fromJson(result!['classification'])
+        : null;
     final imageInfo = result?['image'] as Map<String, dynamic>?;
+    final explanation = result?['explanation'] as Map<String, dynamic>?;
+    final target = explanation?['target_class'];
     final overlay = _showHeat ? _heat : _seg;
     return Scaffold(
       appBar: AppBar(title: const Text('Analisi sperimentale')),
@@ -95,25 +100,36 @@ class _SubmissionResultPageState extends State<SubmissionResultPage> {
             'completed' => 'Analisi completata',
             'failed' => 'Analisi non riuscita',
             'running' => 'Analisi in corso',
+            'waiting_model' => 'In attesa del modello',
             _ => 'In attesa di analisi',
           }),
           if (_error != null) Text(_error!),
           if (_busy) const LinearProgressIndicator(),
           if (classification != null) ...[
             const SizedBox(height: 12),
-            Text('Modello: ${classification['model_name']}'),
-            for (final row in labels)
+            if (classification.isWound)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(woundResearchNotice, key: ValueKey('wound-notice')),
+              ),
+            Text('Modello: ${classification.modelName}'),
+            Text(
+              'Punteggi sperimentali del modello, non probabilità di diagnosi:',
+            ),
+            for (final row in classification.labels)
               Text(
-                '${row['label']}: ${((row['score'] as num) * 100).toStringAsFixed(1)}%',
+                '${classification.nameOf(row.label)}: ${(row.score * 100).toStringAsFixed(1)}%',
               ),
             const SizedBox(height: 12),
+            if (target is String && target.isNotEmpty)
+              Text('Grad-CAM per: ${classification.nameOf(target)}'),
             const Text(
               'Grad-CAM evidenzia aree che influenzano la classificazione; non è una maschera della lesione né una probabilità per pixel.',
             ),
-            if ((result?['explanation'] as Map<String, dynamic>?)?['status'] ==
-                'no_positive_signal')
+            if (explanation?['status'] == 'no_positive_signal')
               const Text(
-                'Nessun contributo positivo visualizzabile per la classe spiegata.',
+                'Nessun contributo positivo visualizzabile per la classe spiegata: '
+                'non significa che la lesione o la ferita sia assente.',
               ),
             if (_seg != null)
               Wrap(

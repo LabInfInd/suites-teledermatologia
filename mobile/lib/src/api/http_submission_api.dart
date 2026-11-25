@@ -162,6 +162,9 @@ class HttpSubmissionApi implements SubmissionApi {
       if (request.modelId case final String modelId) {
         upload.fields['model_id'] = modelId;
       }
+      if (request.explain case final bool explain) {
+        upload.fields['explain'] = '$explain';
+      }
       final photo = request.photo;
       upload.files.add(
         http.MultipartFile(

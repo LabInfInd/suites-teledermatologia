@@ -7,6 +7,14 @@ import 'fakes.dart';
 
 const clinicalClasses = ['ACK', 'BCC', 'MEL', 'NEV', 'SCC', 'SEK'];
 const dermoscopicClasses = ['AK', 'BCC', 'BKL', 'DF', 'MEL', 'NV', 'VASC'];
+const woundClasses = ['diabetic', 'pressure', 'surgical', 'venous'];
+const woundNamesIt = {
+  'diabetic': 'Ulcera diabetica',
+  'pressure': 'Lesione da pressione',
+  'surgical': 'Ferita chirurgica',
+  'venous': 'Ulcera venosa',
+};
+const fakeWoundModel = 'clinical-wounds-azh';
 
 const gradcamWarning =
     'Mappa sperimentale del modello per la classe indicata, condivisa dal medico. '
@@ -16,13 +24,27 @@ const gradcamWarning =
 /// dall'app, con le regole essenziali del contratto 2 dei casi
 /// (`server/docs/CASE_GRADCAM.md`): token, `x-requested-with`, versione
 /// attesa, ruoli, modalità, consenso Grad-CAM e revoca delle mappe.
+///
+/// Con [analysisTasks] espone anche l'estensione di `server/docs/WOUNDS.md`
+/// (tipo di analisi e modello ferite); senza, si comporta come un server
+/// precedente e rifiuta `analysis_task`.
 class FakePlatformServer {
-  FakePlatformServer({this.role = 'patient', this.caseContract = 2});
+  FakePlatformServer({
+    this.role = 'patient',
+    this.caseContract = 2,
+    this.analysisTasks = false,
+  });
 
   String role;
 
   /// Versione del contratto annunciata da `/api/status`.
   int caseContract;
+
+  /// Estensione ferite e ulcere.
+  bool analysisTasks;
+
+  /// Pesi del modello ferite installati.
+  bool woundAvailable = true;
   final cases = <String, Map<String, dynamic>>{};
   final requests = <http.Request>[];
 
@@ -35,15 +57,31 @@ class FakePlatformServer {
   String _id() =>
       '00000000-0000-4000-8000-${(++_ids).toString().padLeft(12, '0')}';
 
-  static List<Map<String, dynamic>> catalog(String mode) => [
+  List<Map<String, dynamic>> catalog(String mode) => [
     if (mode == 'clinical') ...[
       _model('clinical-convnextv2-tiny', 'ConvNeXt V2 clinico', mode, true),
       _model('clinical-dinov2-base', 'DINOv2 clinico', mode, false),
+      if (analysisTasks)
+        {
+          'id': fakeWoundModel,
+          'name': 'DINOv2 ferite (AZH)',
+          'mode': 'clinical',
+          'task': 'wound_type',
+          'scope': 'four_known_wound_types_only',
+          'default': false,
+          'available': woundAvailable,
+          'classes': woundClasses,
+          'class_names_it': woundNamesIt,
+          'classification': true,
+          'segmentation': false,
+          'explanation': 'gradcam',
+          'intended_use': 'research_only_external_validation_required',
+        },
     ] else
       _model('dermoscopic-ftn', 'FTN 7 classi', mode, true, segmentation: true),
   ];
 
-  static Map<String, dynamic> _model(
+  Map<String, dynamic> _model(
     String id,
     String name,
     String mode,
@@ -53,6 +91,10 @@ class FakePlatformServer {
     'id': id,
     'name': name,
     'mode': mode,
+    if (analysisTasks) ...{
+      'task': _defaultTask(mode),
+      'scope': mode == 'clinical' ? 'six_pad_classes' : 'seven_ftn_classes',
+    },
     'default': isDefault,
     'available': true,
     'classes': mode == 'clinical' ? clinicalClasses : dermoscopicClasses,
@@ -62,21 +104,42 @@ class FakePlatformServer {
     'intended_use': 'research_only_external_validation_required',
   };
 
-  static String _defaultModel(String mode) =>
-      mode == 'clinical' ? 'clinical-convnextv2-tiny' : 'dermoscopic-ftn';
+  static String _defaultTask(String mode) =>
+      mode == 'clinical' ? 'skin_lesion' : 'dermoscopic_lesion';
+
+  static String _modelFor(String mode, [String? task]) => switch ((
+    mode,
+    task,
+  )) {
+    (_, 'wound_type') => fakeWoundModel,
+    ('clinical', _) => 'clinical-convnextv2-tiny',
+    _ => 'dermoscopic-ftn',
+  };
+
+  static bool _compatible(String? mode, Object? task) => switch (task) {
+    'skin_lesion' || 'wound_type' => mode == 'clinical',
+    'dermoscopic_lesion' => mode == 'dermoscopic',
+    _ => false,
+  };
+
+  Map<String, dynamic>? _catalogModel(String mode, String id) =>
+      catalog(mode).where((m) => m['id'] == id).firstOrNull;
 
   /// Caso con foto, inviato e con un'analisi completata.
   /// [mode] `null` crea un caso storico senza modalità.
   Map<String, dynamic> addAnalyzedCase({
     String? mode = 'clinical',
+    String? task,
     int images = 1,
     String state = 'awaiting_review',
   }) {
+    task ??= mode == null || !analysisTasks ? null : _defaultTask(mode);
     final caseId = _id();
     final data = cases[caseId] = {
       'id': caseId,
       'code': 'TD-2026-${caseId.substring(30).toUpperCase()}',
       'mode': mode,
+      'analysis_task': task,
       'body_site': 'Dorso',
       'notes': '',
       'state': state,
@@ -102,7 +165,8 @@ class FakePlatformServer {
     final run = _newAnalysis(
       data,
       mode: mode,
-      modelId: mode == null ? null : _defaultModel(mode),
+      task: task,
+      modelId: mode == null ? null : _modelFor(mode, task),
       target: null,
     );
     completeAnalysis(data, run: run);
@@ -113,6 +177,7 @@ class FakePlatformServer {
   Map<String, dynamic> _newAnalysis(
     Map<String, dynamic> data, {
     required String? mode,
+    String? task,
     required String? modelId,
     required String? target,
   }) {
@@ -120,6 +185,7 @@ class FakePlatformServer {
       'id': _id(),
       'state': 'queued',
       'mode': mode,
+      if (analysisTasks) 'analysis_task': task,
       'model_id': modelId,
       'explanation_target': target,
       'failure_code': null,
@@ -132,15 +198,21 @@ class FakePlatformServer {
   }
 
   /// Simula il worker: completa l'ultima analisi del caso. La classe
-  /// predetta è NEV (clinico) o NV (dermatoscopico); Grad-CAM spiega
-  /// `explanation_target` se richiesto, altrimenti la classe predetta.
+  /// predetta è NEV (clinico), NV (dermatoscopico) o pressure (ferite, con
+  /// etichette non ordinate); Grad-CAM spiega `explanation_target` se
+  /// richiesto, altrimenti la classe predetta.
   void completeAnalysis(
     Map<String, dynamic> data, {
     Map<String, dynamic>? run,
   }) {
     run ??= (data['analyses'] as List<Map<String, dynamic>>).first;
     final mode = run['mode'] as String?;
-    final top = mode == 'dermoscopic' ? 'NV' : 'NEV';
+    final wound = run['model_id'] == fakeWoundModel;
+    final top = wound
+        ? 'pressure'
+        : mode == 'dermoscopic'
+        ? 'NV'
+        : 'NEV';
     final ftn = run['model_id'] == 'dermoscopic-ftn';
     run['state'] = 'completed';
     run['finished_at'] = '2026-11-14T10:02:00Z';
@@ -152,14 +224,30 @@ class FakePlatformServer {
           return {
             'image_id': image['id'],
             'input_sha256': 'f' * 64,
-            'classification': {
-              'model_name': ftn ? 'FTN 7 classi' : 'ConvNeXt V2 clinico',
-              'model_version': 'test-1',
-              'labels': [
-                {'label': top, 'score': 0.8},
-                {'label': 'MEL', 'score': 0.2},
-              ],
-            },
+            'classification': wound
+                ? {
+                    'task': 'wound_type',
+                    'scope': 'four_known_wound_types_only',
+                    'class_names_it': woundNamesIt,
+                    'model_name': 'DINOv2 ferite (AZH)',
+                    'model_version': 'wounds-azh-v1-20261120',
+                    'labels': [
+                      {'label': 'surgical', 'score': 0.05},
+                      {'label': 'venous', 'score': 0.15},
+                      {'label': 'pressure', 'score': 0.62},
+                      {'label': 'diabetic', 'score': 0.18},
+                    ],
+                  }
+                : {
+                    if (analysisTasks && mode != null)
+                      'task': _defaultTask(mode),
+                    'model_name': ftn ? 'FTN 7 classi' : 'ConvNeXt V2 clinico',
+                    'model_version': 'test-1',
+                    'labels': [
+                      {'label': top, 'score': 0.8},
+                      {'label': 'MEL', 'score': 0.2},
+                    ],
+                  },
             'segmentation_available': ftn,
             'mask_url': ftn ? '$base/mask' : null,
             'overlay_url': ftn ? '$base/overlay' : null,
@@ -215,7 +303,8 @@ class FakePlatformServer {
         run == null ||
         !{'approved', 'corrected'}.contains(review['decision']) ||
         run['state'] != 'completed' ||
-        (data['mode'] != null && data['mode'] != run['mode'])) {
+        (data['mode'] != null && data['mode'] != run['mode']) ||
+        (analysisTasks && run['analysis_task'] != data['analysis_task'])) {
       return (const [], const []);
     }
     final segmentations = <Map<String, dynamic>>[];
@@ -251,6 +340,7 @@ class FakePlatformServer {
   Map<String, dynamic> _view(Map<String, dynamic> data) {
     final view = {...data, 'image_count': (data['images'] as List).length}
       ..remove('upload_body');
+    if (!analysisTasks) view.remove('analysis_task');
     if (role != 'doctor') {
       view
         ..remove('patient_code')
@@ -279,7 +369,13 @@ class FakePlatformServer {
         },
       });
     }
-    if (path == '/v1/models') return _json({'models': <Object>[]});
+    if (path == '/v1/models') {
+      return _json({
+        'models': analysisTasks && role == 'doctor'
+            ? [...catalog('clinical'), ...catalog('dermoscopic')]
+            : <Object>[],
+      });
+    }
     if (r.headers['authorization'] != 'Bearer token-di-prova') {
       return _detail('Accedi per continuare.', 401);
     }
@@ -294,6 +390,10 @@ class FakePlatformServer {
         if (caseContract >= 2) ...{
           'case_contract_version': caseContract,
           'acquisition_modes': ['clinical', 'dermoscopic'],
+        },
+        if (analysisTasks) ...{
+          'analysis_task_contract_version': 1,
+          'analysis_tasks': ['skin_lesion', 'wound_type', 'dermoscopic_lesion'],
         },
       });
     }
@@ -326,11 +426,17 @@ class FakePlatformServer {
           ],
         }, 422);
       }
+      final task = body['analysis_task'] ?? _defaultTask(body['mode'] as String);
+      if (body.containsKey('analysis_task') && !analysisTasks ||
+          !_compatible(body['mode'] as String, task)) {
+        return _detail('Tipo di analisi non valido per la modalità.', 422);
+      }
       final caseId = _id();
       cases[caseId] = {
         'id': caseId,
         'code': 'TD-2026-${caseId.substring(30).toUpperCase()}',
         'mode': body['mode'],
+        'analysis_task': task,
         'body_site': body['body_site'],
         'notes': body['notes'],
         'state': 'draft',
@@ -400,7 +506,20 @@ class FakePlatformServer {
             409,
           );
         }
-        data['mode'] = body['mode'];
+        if (body.containsKey('analysis_task') && !analysisTasks) {
+          return _detail('Campo non previsto.', 422);
+        }
+        final mode = body['mode'] as String;
+        final task =
+            body['analysis_task'] ??
+            (mode == data['mode'] && data['analysis_task'] != null
+                ? data['analysis_task']
+                : _defaultTask(mode));
+        if (!_compatible(mode, task)) {
+          return _detail('Tipo di analisi non valido per la modalità.', 422);
+        }
+        data['mode'] = mode;
+        data['analysis_task'] = task;
       case ('POST', '/submit'):
         if (images.isEmpty) {
           return _detail(
@@ -414,13 +533,18 @@ class FakePlatformServer {
             409,
           );
         }
-        _newAnalysis(
+        final task = data['analysis_task'] as String?;
+        final modelId = _modelFor(data['mode'] as String, task);
+        final run = _newAnalysis(
           data,
           mode: data['mode'] as String,
-          modelId: _defaultModel(data['mode'] as String),
+          task: task,
+          modelId: modelId,
           target: null,
         );
-        data['state'] = 'queued';
+        final waiting = modelId == fakeWoundModel && !woundAvailable;
+        if (waiting) run['state'] = 'waiting_model';
+        data['state'] = waiting ? 'waiting_model' : 'queued';
       case ('POST', '/reanalyze'):
         if (!{
           'waiting_model',
@@ -440,20 +564,43 @@ class FakePlatformServer {
             409,
           );
         }
-        final modelId = (body['model_id'] ?? _defaultModel(mode)) as String;
-        final model = catalog(
-          mode,
-        ).where((m) => m['id'] == modelId).firstOrNull;
+        if (body.containsKey('analysis_task') && !analysisTasks) {
+          return _detail('Campo non previsto.', 400);
+        }
+        final requestedModel = body['model_id'] as String?;
+        final requestedTask = body['analysis_task'] as String?;
+        final explicit = requestedModel == null
+            ? null
+            : _catalogModel(mode, requestedModel);
+        // Modello esplicito: determina il task; con entrambi devono coincidere.
+        final task = analysisTasks
+            ? (requestedTask ??
+                  explicit?['task'] as String? ??
+                  (mode == data['mode'] ? data['analysis_task'] : null) ??
+                  _defaultTask(mode))
+            : null;
+        final modelId = requestedModel ?? _modelFor(mode, task as String?);
+        final model = _catalogModel(mode, modelId);
         final target = body['explanation_target'] as String?;
         if (model == null ||
+            model['available'] == false ||
+            (analysisTasks && model['task'] != task) ||
+            (task != null && !_compatible(mode, task)) ||
             (target != null && !(model['classes'] as List).contains(target))) {
           return _detail(
             'Modello o classe incompatibili con la modalità.',
             400,
           );
         }
-        _newAnalysis(data, mode: mode, modelId: modelId, target: target);
+        _newAnalysis(
+          data,
+          mode: mode,
+          task: task as String?,
+          modelId: modelId,
+          target: target,
+        );
         data['mode'] = mode;
+        if (analysisTasks) data['analysis_task'] = task;
         data['state'] = 'queued';
       case ('POST', '/reviews'):
         final decision = body['decision'];
@@ -480,9 +627,16 @@ class FakePlatformServer {
             );
           }
           final items = (run['images'] as List).cast<Map<String, dynamic>>();
+          // Classe predetta per punteggio, non per posizione.
           final tops = {
             for (final item in items)
-              ((item['classification'] as Map)['labels'] as List)
+              (((item['classification'] as Map)['labels'] as List)
+                      .cast<Map<String, dynamic>>()
+                      .toList()
+                    ..sort(
+                      (a, b) =>
+                          (b['score'] as num).compareTo(a['score'] as num),
+                    ))
                   .first['label'],
           };
           if (decision == 'approved' && !tops.contains(body['final_label'])) {

@@ -31,6 +31,21 @@ nuovo percorso nell'app è descritta nelle specifiche del 20 novembre 2026:
 I nuovi campi sono retrocompatibili; la scelta del percorso ferite è esplicita.
 La classificazione resta sperimentale per ricerca e richiede valutazione medica.
 
+Nell'app il percorso è integrato così:
+
+- **Paziente**: dopo la modalità sceglie il tipo di analisi (*Lesioni cutanee* o
+  *Ferite e ulcere* per le foto cliniche; con il dermatoscopio solo le lesioni). La
+  scelta non ha un valore predefinito ed è modificabile in bozza; il paziente non
+  vede catalogo, punteggi o mappe non approvate.
+- **Medico, casi**: punteggi associati per etichetta con i nomi italiani del server,
+  Grad-CAM senza segmentazione, nuova analisi con tipo di analisi, modello e classe
+  da spiegare presi dal modello scelto.
+- **Medico, analisi rapida**: per le ferite invia `model_id=clinical-wounds-azh`,
+  `mode=clinical` ed `explain=true`, senza `analysis_task` nel multipart.
+- Se il modello ferite non è disponibile l'app lo segnala e blocca l'invio, senza
+  usare i modelli PAD o FTN. Con un server senza l'estensione il percorso ferite
+  non compare.
+
 ## Ruoli e accesso
 
 | Ruolo | Web | App |
@@ -123,6 +138,7 @@ Verificato il 14/11/2026 sul computer di sviluppo:
 - `flutter build ios --profile`: riuscita. App installata su iPhone 14 Pro (iOS 27.2.1) e provata a mano sull’istanza del progetto, con esito positivo nei flussi principali di paziente e medico.
 - Prova automatica dei client dell’app sull’istanza reale (account di prova, contratto 1): paziente → caso → analisi → valutazione del medico → risposta al paziente, più l’analisi rapida. Per il contratto 2 è stato eseguito uno smoke test HTTPS di sola lettura: contratto annunciato, catalogo per modalità, 403 al paziente sul catalogo, campi del dettaglio.
 - Server: test e verifiche in [server/docs/VERIFICATION.md](server/docs/VERIFICATION.md).
+- Percorso ferite e ulcere, 25/11/2026: `flutter analyze` senza problemi e 143 test superati (33 nuovi), con fixture sintetiche. I nuovi test coprono catalogo e campi mancanti, scelta esplicita senza ripiego su PAD o FTN, combinazioni modalità/task, payload distinti di casi e invii rapidi, UUID nei ritentativi, classi in ordine qualsiasi, target Grad-CAM, assenza di segmentazione e visibilità per ruolo. Non ancora provato sull’istanza reale né su un telefono.
 - Android non compilato: l’Android SDK non è installato sul computer di sviluppo.
 
 ### Ancora da verificare
@@ -134,6 +150,7 @@ Verificato il 14/11/2026 sul computer di sviluppo:
   - foto da 48 MP o più;
   - comportamento macro e adattatore dermatoscopico;
   - cambio di rete e app sospesa durante un invio.
+- **Ferite e ulcere sull’istanza reale:** creazione del caso, invio rapido con `clinical-wounds-azh`, risultato e Grad-CAM, con un account di prova.
 - **Rimozione dei metadati:** verifica su foto reali, per esempio con `exiftool`.
 - **Validazione clinica:** dei modelli su una coorte indipendente di pazienti, telefoni e condizioni di acquisizione del progetto, prima di qualunque uso con pazienti reali.
 

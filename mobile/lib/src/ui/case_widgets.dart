@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api/cases_api.dart';
 import '../domain/acquisition_mode.dart';
 import '../domain/patient_case.dart';
+import 'messages.dart';
 import 'photo_viewer_page.dart';
 
 String caseModeLabel(AcquisitionMode? mode) => switch (mode) {
@@ -75,6 +76,7 @@ class CaseListTile extends StatelessWidget {
     final details = [
       if (item.patientCode != null) 'Paziente ${item.patientCode}',
       caseModeLabel(item.mode),
+      if (item.analysisTask case final task?) task.label,
       if (item.bodySite.isNotEmpty) item.bodySite,
       '${item.imageCount} ${item.imageCount == 1 ? 'foto' : 'foto'}',
       if (item.updatedAt != null)

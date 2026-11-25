@@ -94,6 +94,7 @@ class _SuitesAppState extends State<SuitesApp> {
     inspector: widget.dependencies.inspector,
     api: widget.dependencies.api,
     maxUploadBytes: widget.dependencies.config.maxUploadBytes,
+    catalog: () => widget.dependencies.session?.catalog ?? const [],
   );
 
   @override

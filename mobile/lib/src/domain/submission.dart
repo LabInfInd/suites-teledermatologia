@@ -12,13 +12,21 @@ class SubmissionRequest {
     required this.mode,
     required this.photo,
     this.modelId,
+    this.explain,
   });
 
   final String submissionId;
   final String caseCode;
   final AcquisitionMode mode;
   final CapturedPhoto photo;
+
+  /// Modello esplicito; il task (per esempio ferite) si ricava da questo:
+  /// il multipart non contiene `analysis_task`.
   final String? modelId;
+
+  /// Campo `explain` (Grad-CAM); `null` lo omette e vale il default del
+  /// server. Fa parte del confronto di idempotenza.
+  final bool? explain;
 }
 
 /// Conferma che il server ha ricevuto e registrato la foto.

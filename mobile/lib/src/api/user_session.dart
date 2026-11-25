@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../domain/model_catalog.dart';
+
 class SessionFailure implements Exception {
   const SessionFailure(this.message);
   final String message;
@@ -10,13 +12,6 @@ class SessionFailure implements Exception {
 
 /// Ruoli che possono usare l'app. Gli amministratori usano solo il web.
 enum UserRole { patient, doctor }
-
-class ServerModel {
-  const ServerModel({required this.id, required this.name, required this.mode});
-  final String id;
-  final String name;
-  final String mode;
-}
 
 /// Token held only in memory. No credential is stored in build configuration.
 class UserSession extends ChangeNotifier {
@@ -26,12 +21,19 @@ class UserSession extends ChangeNotifier {
   String? _token;
   UserRole? _role;
   String? _username;
-  List<ServerModel> _models = const [];
+  List<CatalogModel> _catalog = const [];
   String? get token => _token;
   UserRole? get role => _role;
   String? get username => _username;
   bool get authenticated => _token != null;
-  List<ServerModel> get models => List.unmodifiable(_models);
+
+  /// Modelli disponibili per gli invii rapidi del medico.
+  List<CatalogModel> get models =>
+      List.unmodifiable(_catalog.where((m) => m.available));
+
+  /// Catalogo completo, compresi i modelli non disponibili, per mostrarne lo
+  /// stato senza sostituirli con un altro modello.
+  List<CatalogModel> get catalog => List.unmodifiable(_catalog);
   http.Client get client => _client;
   Uri endpoint(String path) => baseUrl.replace(
     pathSegments: [
@@ -89,7 +91,7 @@ class UserSession extends ChangeNotifier {
     _username = (user as Map<String, dynamic>)['username'] as String?;
     if (role == UserRole.doctor) {
       try {
-        _models = await _loadModels();
+        _catalog = await _loadModels();
       } catch (_) {
         await logout();
         rethrow;
@@ -98,28 +100,17 @@ class UserSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<List<ServerModel>> _loadModels() async {
+  Future<List<CatalogModel>> _loadModels() async {
     final catalog = await _client
         .get(endpoint('/v1/models'), headers: headers)
         .timeout(const Duration(seconds: 30));
     if (catalog.statusCode != 200) {
       throw const SessionFailure('Catalogo dei modelli non disponibile.');
     }
-    final rows =
-        (jsonDecode(utf8.decode(catalog.bodyBytes))
-                as Map<String, dynamic>)['models']
-            as List<dynamic>;
-    return rows
-        .whereType<Map<String, dynamic>>()
-        .where((r) => r['available'] == true)
-        .map(
-          (r) => ServerModel(
-            id: r['id'] as String,
-            name: r['name'] as String,
-            mode: r['mode'] as String,
-          ),
-        )
-        .toList();
+    final data = jsonDecode(utf8.decode(catalog.bodyBytes));
+    return CatalogModel.parseList(
+      data is Map<String, dynamic> ? data['models'] : null,
+    );
   }
 
   static String? _serverMessage(http.Response response) {
@@ -164,7 +155,7 @@ class UserSession extends ChangeNotifier {
     _token = null;
     _role = null;
     _username = null;
-    _models = const [];
+    _catalog = const [];
     notifyListeners();
   }
 
@@ -182,7 +173,7 @@ class UserSession extends ChangeNotifier {
   Future<Uint8List> artifact(String path) async {
     // Never send a token to an absolute or untrusted URL returned by a server.
     if (!RegExp(
-      r'^/v1/submissions/[a-f0-9-]{36}/artifacts/(normalized_image|heatmap|heatmap_overlay|segmentation_mask|segmentation_overlay)$',
+      r'^/v1/submissions/[a-f0-9-]{36}/artifacts/(normalized_image|heatmap|heatmap_overlay|heatmap_composite|segmentation_mask|segmentation_overlay)$',
     ).hasMatch(path)) {
       throw const SessionFailure('Indirizzo della mappa non valido.');
     }

@@ -192,7 +192,7 @@ void main() {
       ServerStatus.fromJson({'max_images': 4}).supportsAcquisitionModes,
       isFalse,
     );
-    final model = CatalogModel.fromJson({
+    final model = CatalogModel.tryParse({
       'id': 'dermoscopic-ftn',
       'name': 'FTN',
       'mode': 'dermoscopic',
@@ -201,7 +201,7 @@ void main() {
       'classes': ['AK', 'NV'],
       'segmentation': true,
     });
-    expect(model.mode, AcquisitionMode.dermoscopic);
+    expect(model!.mode, AcquisitionMode.dermoscopic);
     expect(model.classes, ['AK', 'NV']);
     expect(model.segmentation, isTrue);
   });

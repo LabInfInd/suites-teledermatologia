@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../domain/acquisition_mode.dart';
+import '../domain/analysis_task.dart';
 import '../domain/captured_photo.dart';
 import '../domain/patient_case.dart';
 import 'user_session.dart';
@@ -77,20 +78,16 @@ class CasesApi {
     await _json('GET', '/api/status') as Map<String, dynamic>,
   );
 
-  /// Catalogo dei modelli per i casi (solo medico).
+  /// Catalogo dei modelli per i casi (solo medico: il paziente non lo
+  /// chiama mai). Contiene anche i modelli non disponibili, per mostrarne
+  /// lo stato.
   Future<List<CatalogModel>> models(AcquisitionMode mode) async {
     final data = await _json(
       'GET',
       '/api/models',
       query: {'mode': mode.apiValue},
     ) as Map<String, dynamic>;
-    final rows = data['models'];
-    return rows is List
-        ? rows
-              .whereType<Map<String, dynamic>>()
-              .map(CatalogModel.fromJson)
-              .toList()
-        : const [];
+    return CatalogModel.parseList(data['models']);
   }
 
   Future<CaseList> list() async => CaseList.fromJson(
@@ -100,9 +97,12 @@ class CasesApi {
   Future<CaseDetails> details(String id) async =>
       _case(await _json('GET', '/api/cases/$id'));
 
-  /// La modalità è obbligatoria; il modello lo sceglie il server all'invio.
+  /// La modalità è obbligatoria; il modello lo sceglie il server all'invio
+  /// in base a modalità e tipo di analisi. [task] va passato solo ai server
+  /// che dichiarano `analysis_task_contract_version`.
   Future<CaseDetails> create({
     required AcquisitionMode mode,
+    AnalysisTask? task,
     required String bodySite,
     required String notes,
   }) async => _case(
@@ -111,6 +111,7 @@ class CasesApi {
       '/api/cases',
       body: {
         'mode': mode.apiValue,
+        if (task != null) 'analysis_task': task.apiValue,
         'body_site': bodySite,
         'notes': notes,
         'demo_confirmed': true,
@@ -118,16 +119,22 @@ class CasesApi {
     ),
   );
 
-  /// Conferma o correzione della modalità da parte del paziente (bozza, o
-  /// modalità storica mancante con nuove foto richieste).
+  /// Conferma o correzione del percorso da parte del paziente (bozza, o
+  /// modalità storica mancante con nuove foto richieste). [task] omesso con
+  /// la stessa modalità conserva la scelta già fatta sul server.
   Future<CaseDetails> setAcquisition(
     CaseDetails current,
-    AcquisitionMode mode,
-  ) async => _case(
+    AcquisitionMode mode, {
+    AnalysisTask? task,
+  }) async => _case(
     await _json(
       'PATCH',
       '/api/cases/${current.id}/acquisition',
-      body: {'expected_version': current.version, 'mode': mode.apiValue},
+      body: {
+        'expected_version': current.version,
+        'mode': mode.apiValue,
+        if (task != null) 'analysis_task': task.apiValue,
+      },
     ),
   );
 
@@ -172,10 +179,13 @@ class CasesApi {
   );
 
   /// Nuova analisi asincrona. [explanationTarget] `null` spiega la classe
-  /// predetta di ogni foto; un'etichetta del catalogo la spiega su tutte.
+  /// predetta di ogni foto; un'etichetta del modello la spiega su tutte.
+  /// [task] omesso con un [modelId] esplicito: il server lo ricava dal
+  /// modello; se forniti entrambi devono corrispondere.
   Future<CaseDetails> reanalyze(
     CaseDetails current, {
     AcquisitionMode? mode,
+    AnalysisTask? task,
     String? modelId,
     String? explanationTarget,
   }) async => _case(
@@ -185,6 +195,7 @@ class CasesApi {
       body: {
         'expected_version': current.version,
         if (mode != null) 'mode': mode.apiValue,
+        if (task != null) 'analysis_task': task.apiValue,
         'model_id': ?modelId,
         'explanation_target': ?explanationTarget,
       },
